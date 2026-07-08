@@ -27,47 +27,51 @@ def extrair_rota_limpa(valor_rota):
     return texto
 
 
-def processar_aba_wms(df_bruto):
+def processar_aba_wms_coluna_c(df_bruto):
     """
-    Varre o DataFrame bruto para encontrar a linha do cabeçalho real.
-    Garante o retorno de um DataFrame com colunas limpas e padronizadas,
-    sem usar métodos que gerem conflitos de tipo ('str' ou 'DataFrame').
+    Usa a regra de que o Order Number está na Coluna C (índice 2)
+    para achar a linha do cabeçalho e desduplica colunas para evitar erros de DataFrame.
     """
-    # Converte tudo para string de forma segura para análise de metadados
-    df_strings = df_bruto.astype(str).copy()
+    linha_cabecalho_idx = 0
     
-    linha_cabecalho_idx = None
+    # Procura especificamente na Coluna C (índice 2) onde está o termo 'order'
+    for i in range(min(15, len(df_bruto))):
+        if df_bruto.shape[1] > 2:
+            celula_c = str(df_bruto.iloc[i, 2]).strip().lower()
+            if "order" in celula_c:
+                linha_cabecalho_idx = i
+                break
+                
+    # Extrai os nomes das colunas daquela linha e os dados abaixo dela
+    nomes_colunas = df_bruto.iloc[linha_cabecalho_idx].tolist()
+    df_dados = df_bruto.iloc[linha_cabecalho_idx + 1 :].copy()
     
-    # Procura qual linha contém as palavras-chave do WMS
-    for i in range(min(20, len(df_strings))):
-        valores_linha = df_strings.iloc[i].tolist()
-        linha_texto_unida = " ".join(valores_linha).lower()
-        
-        if "order number" in linha_texto_unida or "orderkey" in linha_texto_unida:
-            linha_cabecalho_idx = i
-            break
-            
-    if linha_cabecalho_idx is not None:
-        # Extrai os nomes das colunas diretamente dessa linha
-        nomes_colunas = df_bruto.iloc[linha_cabecalho_idx].tolist()
-        # Corta o dataframe para conter apenas os dados abaixo do cabeçalho
-        df_dados = df_bruto.iloc[linha_cabecalho_idx + 1 :].copy()
-    else:
-        # Se não achar nada, assume a primeira linha como cabeçalho provisório
-        nomes_colunas = df_bruto.iloc[0].tolist()
-        df_dados = df_bruto.iloc[1:].copy()
-
-    # Limpa e padroniza os nomes das colunas (reovendo espaços e em maiúsculo)
-    colunas_limpas = []
-    for col in nomes_colunas:
+    # Limpa, padroniza e desduplica os nomes das colunas
+    colunas_finais = []
+    vistas = set()
+    
+    for idx, col in enumerate(nomes_colunas):
         nome_str = str(col).strip().upper()
-        # Padroniza variações da chave principal do WMS
-        if "ORDER" in nome_str and "NUM" in nome_str:
-            colunas_limpas.append("ORDERKEY")
+        
+        # Se for a Coluna C ou contiver ORDER e NUM, padroniza para ORDERKEY
+        if idx == 2 or ("ORDER" in nome_str and "NUM" in nome_str):
+            nome_base = "ORDERKEY"
+        elif not nome_str or nome_str == "NAN":
+            nome_base = f"COL_{idx}"
         else:
-            colunas_limpas.append(nome_str)
+            nome_base = nome_str
             
-    df_dados.columns = colunas_limpas
+        # Garante que não haverá nenhuma coluna com nome idêntico (evita o erro de DataFrame)
+        nome_final = nome_base
+        contador = 1
+        while nome_final in vistas:
+            nome_final = f"{nome_base}_{contador}"
+            contador += 1
+            
+        vistas.add(nome_final)
+        colunas_finais.append(nome_final)
+        
+    df_dados.columns = colunas_finais
     return df_dados
 
 
@@ -76,16 +80,16 @@ def carregar_dados_local():
     try:
         arquivo_excel = "Export.xlsx"
         
-        # Lê as abas sem assumir nenhuma linha fixa como cabeçalho (header=None)
+        # Carrega o arquivo de forma 100% bruta (sem cabeçalho inicial)
         with pd.ExcelFile(arquivo_excel, engine="openpyxl") as xls:
             df_detail_cru = pd.read_excel(xls, sheet_name="Detail", header=None)
             df_data_cru = pd.read_excel(xls, sheet_name="Data", header=None)
 
-        # Processa dinamicamente a estrutura de cada aba do relatório
-        df_detail = processar_aba_wms(df_detail_cru)
-        df_data = processar_aba_wms(df_data_cru)
+        # Processa as abas aplicando o filtro focado na Coluna C
+        df_detail = processar_aba_wms_coluna_c(df_detail_cru)
+        df_data = processar_aba_wms_coluna_c(df_data_cru)
 
-        # Garante que a chave ORDERKEY seja tratada estritamente como texto limpo
+        # Agora a coluna ORDERKEY é garantidamente uma Series única (sem duplicatas)
         if "ORDERKEY" in df_detail.columns:
             df_detail["ORDERKEY"] = (
                 df_detail["ORDERKEY"]
@@ -101,14 +105,14 @@ def carregar_dados_local():
                 .str.replace(".0", "", regex=False)
             )
 
-        # Identifica e trata a coluna de Rotas (Procura por ROUTE)
+        # Localiza dinamicamente a coluna de Rotas (ROUTE) na aba Data
         col_route = [c for c in df_data.columns if "ROUTE" in c]
         if col_route:
             df_data["ROTA_LIMPA"] = df_data[col_route[0]].apply(extrair_rota_limpa)
         else:
             df_data["ROTA_LIMPA"] = "N/A"
 
-        # Identifica e trata a coluna de Sequência/Pedido na rota (Procura por STOP)
+        # Localiza dinamicamente a coluna de Parada/Sequência (STOP) na aba Data
         col_stop = [c for c in df_data.columns if "STOP" in c]
         if col_stop:
             df_data["PEDIDO_ROTA"] = (
@@ -117,20 +121,20 @@ def carregar_dados_local():
         else:
             df_data["PEDIDO_ROTA"] = "N/A"
 
-        # Identifica dinamicamente as colunas de SKU e quantidade na aba Detail
+        # Localiza SKU e Quantidade na aba Detail
         col_sku = [c for c in df_detail.columns if "SKU" in c]
         col_qty = [c for c in df_detail.columns if "QTY" in c or "QUANT" in c]
 
         sku_lbl = col_sku[0] if col_sku else "SKU"
         qty_lbl = col_qty[0] if col_qty else "OPENQTY"
 
-        # Garante que as colunas críticas existem e as isola
+        # Isola as colunas limpas necessárias para o Procv (merge)
         df_det_res = df_detail[["ORDERKEY", sku_lbl, qty_lbl]].rename(
             columns={sku_lbl: "SKU", qty_lbl: "OPENQTY"}
         )
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Faz o cruzamento das duas tabelas através da chave ORDERKEY (Left Join)
+        # Faz o cruzamento perfeito entre Detail e Data
         df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="left")
         return df_consolidado
 
@@ -142,7 +146,7 @@ def carregar_dados_local():
         return None
 
 
-# Botão de controle de cache na barra lateral
+# Botão para limpar cache na barra lateral
 if st.sidebar.button("🔄 Forçar Limpeza de Cache"):
     st.cache_data.clear()
     st.rerun()
