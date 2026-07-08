@@ -5,11 +5,11 @@ import requests
 import streamlit as st
 
 # =========================================================================
-# CONFIGURAÇÃO DO REPOSITÓRIO
+# CONFIGURAÇÃO DO REPOSITÓRIO (NOME CORRIGIDO CONFORME O ERRO 404)
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
-NOME_ARQUIVO = "base_consulta.xlsx"
+NOME_ARQUIVO = "Export.xlsx"  # <--- Mudamos de 'base_consulta.xlsx' para 'Export.xlsx'
 
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
@@ -41,55 +41,36 @@ def carregar_dados_direto(url):
         resposta = requests.get(url, headers=headers)
         
         if resposta.status_code != 200:
-            st.error(f"Erro ao acessar o arquivo no GitHub. Status: {resposta.status_code}")
+            st.error(
+                f"Erro 404: O arquivo '{NOME_ARQUIVO}' não foi encontrado no seu GitHub. "
+                f"Certifique-se de que o nome do arquivo no repositório está escrito exatamente como '{NOME_ARQUIVO}'."
+            )
             return None
 
         conteudo = io.BytesIO(resposta.content)
 
-        # --- ESTRATÉGIA DE LEITURA BLINDADA ---
-        try:
-            # 1. Tenta ler como Excel Real (aba Sheet1 ou padrão)
-            df = pd.read_excel(conteudo, engine="openpyxl")
-        except Exception:
-            # 2. Se falhar (XLRDError), volta o ponteiro e lê como CSV (Tratando o disfarce do WMS)
-            conteudo.seek(0)
-            try:
-                df = pd.read_csv(conteudo, sep=",", engine="python")
-            except Exception:
-                conteudo.seek(0)
-                df = pd.read_csv(conteudo, sep=";", engine="python")
+        # Como os dados reais vêm em abas separadas ('Detail' e 'Data') no Excel gerado pelo WMS:
+        with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
+            df_detail = pd.read_excel(xls, sheet_name="Detail")
+            df_data = pd.read_excel(xls, sheet_name="Data")
 
         # Força os nomes de colunas para letras maiúsculas e remove espaços
-        df.columns = df.columns.str.strip().str.upper()
+        df_detail.columns = df_detail.columns.str.strip().str.upper()
+        df_data.columns = df_data.columns.str.strip().str.upper()
 
-        # Localização dinâmica e inteligente das colunas essenciais
-        col_orderkey = "ORDERKEY" if "ORDERKEY" in df.columns else df.columns[2]
-        col_sku = "SKU" if "SKU" in df.columns else [c for c in df.columns if "SKU" in c][0]
-        col_openqty = "OPENQTY" if "OPENQTY" in df.columns else ([c for c in df.columns if "QTY" in c][0] if [c for c in df.columns if "QTY" in c] else df.columns[10])
-        col_route = "ROUTE" if "ROUTE" in df.columns else [c for c in df.columns if "ROUTE" in c][0]
-        col_stop = "STOP" if "STOP" in df.columns else ([c for c in df.columns if "STOP" in c][0] if [c for c in df.columns if "STOP" in c] else None)
+        # Mapeamento com base nas colunas reais das suas abas
+        df_data["ROTA_LIMPA"] = df_data["ROUTE"].apply(extrair_rota_limpa)
+        df_data["PEDIDO_ROTA"] = df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
 
-        # Tratamento dos dados para exibição na tela
-        df["ROTA_LIMPA"] = df[col_route].apply(extrair_rota_limpa)
-        
-        if col_stop:
-            df["PEDIDO_ROTA"] = df[col_stop].astype(str).str.replace(".0", "", regex=False)
-        else:
-            df["PEDIDO_ROTA"] = "1"
+        df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
+        df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Consolidação da tabela estruturada
-        df_final = pd.DataFrame({
-            "ORDERKEY": df[col_orderkey],
-            "SKU": df[col_sku],
-            "OPENQTY": df[col_openqty],
-            "ROTA_LIMPA": df["ROTA_LIMPA"],
-            "PEDIDO_ROTA": df["PEDIDO_ROTA"]
-        })
-        
-        return df_final
+        # Faz o PROCV / Cruzamento de dados entre as abas
+        df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="inner")
+        return df_consolidado
 
     except Exception as e:
-        st.error(f"Erro ao processar as colunas da tabela: {e}")
+        st.error(f"Erro ao processar o arquivo: {e}")
         return None
 
 
