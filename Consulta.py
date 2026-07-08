@@ -9,7 +9,7 @@ import streamlit as st
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
-NOME_ARQUIVO = "Export.xlsx"  # Seu arquivo no GitHub
+NOME_ARQUIVO = "Export.xlsx"
 
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
@@ -36,7 +36,7 @@ def extrair_rota_limpa(valor_rota):
 
 
 @st.cache_data(ttl=300)
-def carregar_e_cruzar_dados(url):
+def carregar_dados_direto(url):
     try:
         resposta = requests.get(url)
         if resposta.status_code != 200:
@@ -47,53 +47,46 @@ def carregar_e_cruzar_dados(url):
 
         conteudo = io.BytesIO(resposta.content)
 
-        # --- AJUSTE DE SEGURANÇA OPERACIONAL ---
-        # Tenta ler como Excel padrão. Se falhar por ser um CSV renomeado, lê como CSV.
+        # Lê a planilha única (sem especificar abas para evitar o erro)
         try:
-            df_detail = pd.read_excel(conteudo, sheet_name="Detail")
-            df_data = pd.read_excel(conteudo, sheet_name="Data")
+            df = pd.read_excel(conteudo)
         except Exception:
-            # Caso o arquivo seja um CSV plano
             conteudo.seek(0)
-            df_geral = pd.read_csv(conteudo, sep=None, engine="python")
-            # Se for uma tabela única, usamos ela mesma para mapear
-            df_geral.columns = df_geral.columns.str.strip()
-            df_geral["OrderKey"] = df_geral.get(
-                "OrderKey", df_geral.iloc[:, 2] if len(df_geral.columns) > 2 else "N/A"
-            )
-            df_geral["SKU"] = df_geral.get(
-                "SKU", df_geral.iloc[:, 3] if len(df_geral.columns) > 3 else "N/A"
-            )
-            df_geral["OpenQty"] = df_geral.get(
-                "OpenQty",
-                df_geral.iloc[:, 10] if len(df_geral.columns) > 10 else 0,
-            )
-            col_gy = (
-                "GY"
-                if "GY" in df_geral.columns
-                else df_geral.columns[206]
-                if len(df_geral.columns) > 206
-                else df_geral.columns[-1]
-            )
-            df_geral["Rota_Limpa"] = df_geral[col_gy].apply(extrair_rota_limpa)
-            return df_geral[[ "OrderKey", "SKU", "OpenQty", "Rota_Limpa" ]]
+            df = pd.read_csv(conteudo, sep=None, engine="python")
 
-        # Limpeza de colunas das duas abas
-        df_detail.columns = df_detail.columns.str.strip()
-        df_data.columns = df_data.columns.str.strip()
+        # Limpa espaços em branco dos nomes das colunas
+        df.columns = df.columns.str.strip()
 
-        # Isola a rota limpa na tabela Data (Coluna GY ou índice 206)
-        coluna_rota = "GY" if "GY" in df_data.columns else df_data.columns[206]
-        df_data["Rota_Limpa"] = df_data[coluna_rota].apply(extrair_rota_limpa)
+        # Mapeamento dinâmico baseado nos nomes exatos que estão no seu WMS
+        col_ordem = "ORDERKEY" if "ORDERKEY" in df.columns else "OrderKey"
+        col_sku = "SKU" if "SKU" in df.columns else "Sku"
+        col_qtd = "OPENQTY" if "OPENQTY" in df.columns else "OpenQty"
 
-        # Seleciona as colunas essenciais e cruza (Merge)
-        df_det_res = df_detail[["OrderKey", "SKU", "OpenQty"]]
-        df_dat_res = df_data[["OrderKey", "Rota_Limpa"]]
+        # Identifica a coluna da rota (procura por colunas que contenham "ROUTE" ou assume a posição padrão)
+        colunas_rota_possiveis = [c for c in df.columns if "ROUTE" in c.upper()]
+        if colunas_rota_possiveis:
+            col_rota = colunas_rota_possiveis[0]
+        else:
+            # Caso não ache por nome, tenta pegar pelo índice 206 (GY) se houver colunas suficientes, ou a última
+            col_rota = (
+                df.columns[206] if len(df.columns) > 206 else df.columns[-1]
+            )
 
-        df_consolidado = pd.merge(
-            df_det_res, df_dat_res, on="OrderKey", how="inner"
+        # Cria a coluna de rota limpa de forma segura
+        df["Rota_Limpa"] = df[col_rota].apply(extrair_rota_limpa)
+
+        # Retorna apenas o feijão com arroz que precisamos pra tela
+        df_resumido = pd.DataFrame(
+            {
+                "OrderKey": df[col_ordem],
+                "SKU": df[col_sku],
+                "OpenQty": df[col_qtd],
+                "Rota_Limpa": df["Rota_Limpa"],
+            }
         )
-        return df_consolidado
+
+        return df_resumido
+
     except Exception as e:
         st.error(f"Erro ao processar os dados do WMS: {e}")
         return None
@@ -104,14 +97,14 @@ if st.sidebar.button("🔄 Atualizar Dados do GitHub"):
     st.cache_data.clear()
     st.rerun()
 
-# Carrega a base filtrada
-df_base = carregar_e_cruzar_dados(URL_RAW)
+# Carrega a base limpa
+df_base = carregar_dados_direto(URL_RAW)
 
 if df_base is not None:
     # Área de Filtros
     col1, col2 = st.columns(2)
     with col1:
-        sku_busca = st.text_input("🔍 Digite o SKU:", placeholder="Ex: 123456")
+        sku_busca = st.text_input("🔍 Digite o SKU:", placeholder="Ex: 10226403")
     with col2:
         rota_busca = st.text_input(
             "📍 Digite a Rota:", placeholder="Ex: BR0551285"
