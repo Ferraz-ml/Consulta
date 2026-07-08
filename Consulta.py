@@ -2,7 +2,6 @@ import io
 import re
 import pandas as pd
 import streamlit as st
-import openpyxl
 
 # =========================================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -28,42 +27,48 @@ def extrair_rota_limpa(valor_rota):
     return texto
 
 
-def descobrir_linha_cabecalho(caminho_arquivo, nome_aba):
-    """Abre o arquivo usando openpyxl nativo e retorna o índice correto do cabeçalho (0-indexed)"""
-    wb = openpyxl.load_workbook(caminho_arquivo, data_only=True, read_only=True)
-    if nome_aba not in wb.sheetnames:
-        return 0
+def processar_aba_wms(df_bruto):
+    """
+    Varre o DataFrame bruto para encontrar a linha do cabeçalho real.
+    Garante o retorno de um DataFrame com colunas limpas e padronizadas,
+    sem usar métodos que gerem conflitos de tipo ('str' ou 'DataFrame').
+    """
+    # Converte tudo para string de forma segura para análise de metadados
+    df_strings = df_bruto.astype(str).copy()
     
-    ws = wb[nome_aba]
-    # Varre as primeiras 15 linhas usando células nativas (sem passar pelo Pandas)
-    for idx_linha, linha in enumerate(ws.iter_rows(max_row=15, values_only=True)):
-        # Junta todas as células da linha numa única string minúscula
-        texto_linha = " ".join([str(celula).strip().lower() for celula in linha if celula is not None])
-        if "order number" in texto_linha or "orderkey" in texto_linha:
-            return idx_linha
-            
-    return 0
-
-
-def carregar_e_limpar_aba(caminho_arquivo, nome_aba):
-    """Localiza a linha real do cabeçalho nativamente e carrega o DataFrame limpo"""
-    linha_header = descobrir_linha_cabecalho(caminho_arquivo, nome_aba)
+    linha_cabecalho_idx = None
     
-    # Carrega definindo exatamente qual linha contém os títulos reais das colunas
-    df = pd.read_excel(caminho_arquivo, sheet_name=nome_aba, header=linha_header)
-    
-    # Padroniza nomes de colunas
-    df.columns = df.columns.astype(str).str.strip().str.upper()
-    
-    # Normaliza variações para garantir que vire 'ORDERKEY'
-    renomear = {}
-    for col in df.columns:
-        if "ORDER" in col and "NUM" in col:
-            renomear[col] = "ORDERKEY"
-    if renomear:
-        df = df.rename(columns=renomear)
+    # Procura qual linha contém as palavras-chave do WMS
+    for i in range(min(20, len(df_strings))):
+        valores_linha = df_strings.iloc[i].tolist()
+        linha_texto_unida = " ".join(valores_linha).lower()
         
-    return df
+        if "order number" in linha_texto_unida or "orderkey" in linha_texto_unida:
+            linha_cabecalho_idx = i
+            break
+            
+    if linha_cabecalho_idx is not None:
+        # Extrai os nomes das colunas diretamente dessa linha
+        nomes_colunas = df_bruto.iloc[linha_cabecalho_idx].tolist()
+        # Corta o dataframe para conter apenas os dados abaixo do cabeçalho
+        df_dados = df_bruto.iloc[linha_cabecalho_idx + 1 :].copy()
+    else:
+        # Se não achar nada, assume a primeira linha como cabeçalho provisório
+        nomes_colunas = df_bruto.iloc[0].tolist()
+        df_dados = df_bruto.iloc[1:].copy()
+
+    # Limpa e padroniza os nomes das colunas (reovendo espaços e em maiúsculo)
+    colunas_limpas = []
+    for col in nomes_colunas:
+        nome_str = str(col).strip().upper()
+        # Padroniza variações da chave principal do WMS
+        if "ORDER" in nome_str and "NUM" in nome_str:
+            colunas_limpas.append("ORDERKEY")
+        else:
+            colunas_limpas.append(nome_str)
+            
+    df_dados.columns = colunas_limpas
+    return df_dados
 
 
 @st.cache_data(ttl=60)
@@ -71,11 +76,16 @@ def carregar_dados_local():
     try:
         arquivo_excel = "Export.xlsx"
         
-        # Carrega as duas abas aplicando a limpeza nativa de cabeçalho superior
-        df_detail = carregar_e_limpar_aba(arquivo_excel, "Detail")
-        df_data = carregar_e_limpar_aba(arquivo_excel, "Data")
+        # Lê as abas sem assumir nenhuma linha fixa como cabeçalho (header=None)
+        with pd.ExcelFile(arquivo_excel, engine="openpyxl") as xls:
+            df_detail_cru = pd.read_excel(xls, sheet_name="Detail", header=None)
+            df_data_cru = pd.read_excel(xls, sheet_name="Data", header=None)
 
-        # Garante que a chave ORDERKEY seja String idêntica e sem decimais flutuantes
+        # Processa dinamicamente a estrutura de cada aba do relatório
+        df_detail = processar_aba_wms(df_detail_cru)
+        df_data = processar_aba_wms(df_data_cru)
+
+        # Garante que a chave ORDERKEY seja tratada estritamente como texto limpo
         if "ORDERKEY" in df_detail.columns:
             df_detail["ORDERKEY"] = (
                 df_detail["ORDERKEY"]
@@ -91,14 +101,14 @@ def carregar_dados_local():
                 .str.replace(".0", "", regex=False)
             )
 
-        # Mapeia dinamicamente a coluna de Rota (ROUTE)
+        # Identifica e trata a coluna de Rotas (Procura por ROUTE)
         col_route = [c for c in df_data.columns if "ROUTE" in c]
         if col_route:
             df_data["ROTA_LIMPA"] = df_data[col_route[0]].apply(extrair_rota_limpa)
         else:
             df_data["ROTA_LIMPA"] = "N/A"
 
-        # Mapeia dinamicamente a coluna de Parada (STOP)
+        # Identifica e trata a coluna de Sequência/Pedido na rota (Procura por STOP)
         col_stop = [c for c in df_data.columns if "STOP" in c]
         if col_stop:
             df_data["PEDIDO_ROTA"] = (
@@ -107,27 +117,25 @@ def carregar_dados_local():
         else:
             df_data["PEDIDO_ROTA"] = "N/A"
 
-        # Mapeia dinamicamente SKU e Quantidade
+        # Identifica dinamicamente as colunas de SKU e quantidade na aba Detail
         col_sku = [c for c in df_detail.columns if "SKU" in c]
         col_qty = [c for c in df_detail.columns if "QTY" in c or "QUANT" in c]
 
         sku_lbl = col_sku[0] if col_sku else "SKU"
         qty_lbl = col_qty[0] if col_qty else "OPENQTY"
 
-        # Filtra apenas o necessário para a tabela final de conferência
+        # Garante que as colunas críticas existem e as isola
         df_det_res = df_detail[["ORDERKEY", sku_lbl, qty_lbl]].rename(
             columns={sku_lbl: "SKU", qty_lbl: "OPENQTY"}
         )
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Faz o cruzamento estruturado (PROCV via Left Join)
+        # Faz o cruzamento das duas tabelas através da chave ORDERKEY (Left Join)
         df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="left")
         return df_consolidado
 
     except FileNotFoundError:
-        st.error(
-            "Erro: O arquivo 'Export.xlsx' não foi encontrado na pasta do projeto."
-        )
+        st.error("Erro: O arquivo 'Export.xlsx' não foi encontrado na pasta do projeto.")
         return None
     except Exception as e:
         st.error(f"Erro ao processar o arquivo: {e}")
@@ -157,9 +165,7 @@ if df_base is not None:
             ]
         if rota_busca:
             df_filtrado = df_filtrado[
-                df_filtrado["ROTA_LIMPA"]
-                .astype(str)
-                .str.contains(rota_busca, case=False)
+                df_filtrado["ROTA_LIMPA"].astype(str).str.contains(rota_busca, case=False)
             ]
 
         if not df_filtrado.empty:
@@ -191,8 +197,6 @@ if df_base is not None:
         else:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
-        st.info(
-            "💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias."
-        )
+        st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento.")
 else:
     st.info("Aguardando carregamento da base de dados...")
