@@ -27,6 +27,19 @@ def extrair_rota_limpa(valor_rota):
     return texto
 
 
+def limpar_chave_wms(serie):
+    """
+    Aplica uma limpeza profunda e agressiva para garantir que chaves de texto
+    vistas como '6878076540' batam perfeitamente entre abas distintas.
+    """
+    return (
+        serie.astype(str)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.replace(r"\s+", "", regex=True)
+    )
+
+
 def processar_aba_wms_coluna_c(df_bruto):
     """
     Usa a regra de que o Order Number está na Coluna C (índice 2)
@@ -61,7 +74,6 @@ def processar_aba_wms_coluna_c(df_bruto):
         else:
             nome_base = nome_str
             
-        # Garante que não haverá nenhuma coluna com nome idêntico (evita o erro de DataFrame)
         nome_final = nome_base
         contador = 1
         while nome_final in vistas:
@@ -89,21 +101,11 @@ def carregar_dados_local():
         df_detail = processar_aba_wms_coluna_c(df_detail_cru)
         df_data = processar_aba_wms_coluna_c(df_data_cru)
 
-        # Agora a coluna ORDERKEY é garantidamente uma Series única (sem duplicatas)
+        # Realiza a limpeza e padronização profunda da chave ORDERKEY
         if "ORDERKEY" in df_detail.columns:
-            df_detail["ORDERKEY"] = (
-                df_detail["ORDERKEY"]
-                .astype(str)
-                .str.strip()
-                .str.replace(".0", "", regex=False)
-            )
+            df_detail["ORDERKEY"] = limpar_chave_wms(df_detail["ORDERKEY"])
         if "ORDERKEY" in df_data.columns:
-            df_data["ORDERKEY"] = (
-                df_data["ORDERKEY"]
-                .astype(str)
-                .str.strip()
-                .str.replace(".0", "", regex=False)
-            )
+            df_data["ORDERKEY"] = limpar_chave_wms(df_data["ORDERKEY"])
 
         # Localiza dinamicamente a coluna de Rotas (ROUTE) na aba Data
         col_route = [c for c in df_data.columns if "ROUTE" in c]
@@ -116,7 +118,7 @@ def carregar_dados_local():
         col_stop = [c for c in df_data.columns if "STOP" in c]
         if col_stop:
             df_data["PEDIDO_ROTA"] = (
-                df_data[col_stop[0]].astype(str).str.replace(".0", "", regex=False)
+                df_data[col_stop[0]].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
             )
         else:
             df_data["PEDIDO_ROTA"] = "N/A"
@@ -134,7 +136,7 @@ def carregar_dados_local():
         )
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Faz o cruzamento perfeito entre Detail e Data
+        # Faz o cruzamento perfeito entre Detail e Data garantindo compatibilidade de strings
         df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="left")
         return df_consolidado
 
