@@ -76,7 +76,7 @@ st.markdown(
     
     <div class="custom-header">
         <h1 class="custom-title">📦 CONSULTA</h1>
-        <p class="custom-subtitle">Controlo de Fluxo Last-Mile & Validação de Rotas</p>
+        <p class="custom-subtitle">Controle de Fluxo Last-Mile & Validação de Rotas</p>
     </div>
     """,
     unsafe_allow_html=True
