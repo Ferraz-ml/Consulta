@@ -7,13 +7,56 @@ import streamlit as st
 # CONFIGURAÇÃO DA PÁGINA
 # =========================================================================
 st.set_page_config(
-    page_title="Consulta de Cargas e Rotas", page_icon="📦", layout="wide"
+    page_title="Consulta de Cargas", page_icon="📦", layout="wide"
 )
 
-st.title("📦 Consulta Rápida de Cargas por Rota e SKU")
+# INJEÇÃO DE DESIGN LOGÍSTICO (FUNDO AZUL ESCURO GRADIENTE + FLUXOS)
 st.markdown(
-    "Busque o SKU e a rota para localizar onde o material está e realize a conferência na caixa."
+    """
+    <style>
+    .custom-header {
+        background: linear-gradient(135px, #0f2027 0%, #203a43 50%, #2c5364 100%);
+        background-image: radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px), 
+                          radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        background-size: 20px 20px;
+        background-position: 0 0, 10px 10px;
+        padding: 30px;
+        border-radius: 12px;
+        text-align: center;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        border-bottom: 4px solid #00d2ff;
+    }
+    .custom-title {
+        color: #ffffff;
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+        font-size: 3rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        margin: 0;
+        text-transform: uppercase;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+    }
+    .custom-subtitle {
+        color: #00d2ff;
+        font-size: 1rem;
+        margin-top: 8px;
+        margin-bottom: 0;
+        font-weight: 300;
+        letter-spacing: 1px;
+    }
+    </style>
+    
+    <div class="custom-header">
+        <h1 class="custom-title">📦 CONSULTA</h1>
+        <p class="custom-subtitle">SISTEMA INTEGRADO DE CONFERÊNCIA DE ROTAS E SKUs</p>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
+
+# O restante das funções do seu código continua exatamente igual abaixo...
+# (def extrair_quatro_digitos_rota, limpar_serie_texto, carregar_dados_local, etc.)
 
 
 def extrair_quatro_digitos_rota(valor_rota):
