@@ -5,11 +5,11 @@ import requests
 import streamlit as st
 
 # =========================================================================
-# CONFIGURAÇÃO DO REPOSITÓRIO (NOME CORRIGIDO)
+# CONFIGURAÇÃO DO REPOSITÓRIO
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
-NOME_ARQUIVO = "base_consulta.xlsx"  # <--- CORRIGIDO PARA O SEU ARQUIVO REAL
+NOME_ARQUIVO = "base_consulta.xlsx"
 
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
@@ -40,61 +40,56 @@ def carregar_e_cruzar_dados(url):
         resposta = requests.get(url)
         if resposta.status_code != 200:
             st.error(
-                f"Erro ao acessar o arquivo '{NOME_ARQUIVO}' no GitHub. Verifique se o nome do arquivo está idêntico (maiúsculas/minúsculas) e se a extensão é .xlsx ou .csv."
+                f"Erro ao acessar o arquivo '{NOME_ARQUIVO}' no GitHub. Verifique o nome."
             )
             return None
 
         conteudo = io.BytesIO(resposta.content)
 
-        # Tenta ler como abas de Excel. Se falhar (por ser um CSV disfarçado), lê como CSV plano.
-        try:
-            with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
-                df_detail = pd.read_excel(xls, sheet_name="Detail")
-                df_data = pd.read_excel(xls, sheet_name="Data")
-            
-            df_detail.columns = df_detail.columns.str.strip()
-            df_data.columns = df_data.columns.str.strip()
-            
-            df_data["Rota_Limpa"] = df_data["ROUTE"].apply(extrair_rota_limpa)
-            df_data["Pedido_Rota"] = df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
-            
-            df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
-            df_dat_res = df_data[["ORDERKEY", "Rota_Limpa", "Pedido_Rota"]]
-            
-            df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="inner")
-            return df_consolidado
+        # Força a leitura das duas abas usando openpyxl
+        with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
+            df_detail = pd.read_excel(xls, sheet_name="Detail")
+            df_data = pd.read_excel(xls, sheet_name="Data")
 
-        except Exception:
-            # Fallback caso o arquivo enviado seja um CSV único unificado
-            conteudo.seek(0)
-            try:
-                df = pd.read_excel(conteudo)
-            except Exception:
-                conteudo.seek(0)
-                df = pd.read_csv(conteudo, sep=None, engine="python")
-            
-            df.columns = df.columns.str.strip()
-            
-            col_ordem = "ORDERKEY" if "ORDERKEY" in df.columns else df.columns[2]
-            col_sku = "SKU" if "SKU" in df.columns else df.columns[3]
-            col_qtd = "OPENQTY" if "OPENQTY" in df.columns else df.columns[10]
-            col_rota = "ROUTE" if "ROUTE" in df.columns else df.columns[11]
-            col_stop = "STOP" if "STOP" in df.columns else "STOP"
-            
-            df["Rota_Limpa"] = df[col_rota].apply(extrair_rota_limpa)
-            df["Pedido_Rota"] = df[col_stop].astype(str).str.replace(".0", "", regex=False) if col_stop in df.columns else "1"
-            
-            df_resumido = pd.DataFrame({
-                "ORDERKEY": df[col_ordem],
-                "SKU": df[col_sku],
-                "OPENQTY": df[col_qtd],
-                "Rota_Limpa": df["Rota_Limpa"],
-                "Pedido_Rota": df["Pedido_Rota"]
-            })
-            return df_resumido
+        # Força todas as colunas para Letras Maiúsculas e sem espaços laterais
+        df_detail.columns = df_detail.columns.str.strip().str.upper()
+        df_data.columns = df_data.columns.str.strip().str.upper()
+
+        # --- MAPEAMENTO DA ABA DETAIL ---
+        col_orderkey_det = "ORDERKEY" if "ORDERKEY" in df_detail.columns else df_detail.columns[2]
+        col_sku = "SKU" if "SKU" in df_detail.columns else df_detail.columns[3]
+        col_openqty = "OPENQTY" if "OPENQTY" in df_detail.columns else df_detail.columns[10]
+
+        # --- MAPEAMENTO DA ABA DATA ---
+        col_orderkey_dat = "ORDERKEY" if "ORDERKEY" in df_data.columns else df_data.columns[2]
+        
+        # Procura coluna de rota pelo nome, se não achar, pega a coluna índice 11 (ROUTE)
+        col_route = "ROUTE" if "ROUTE" in df_data.columns else df_data.columns[11]
+        
+        # Procura coluna de stop pelo nome, se não achar, pega a coluna índice 12 (STOP)
+        col_stop = "STOP" if "STOP" in df_data.columns else df_data.columns[12]
+
+        # Tratamento seguro dos dados de rota e stop
+        df_data["ROTA_LIMPA"] = df_data[col_route].apply(extrair_rota_limpa)
+        df_data["PEDIDO_ROTA"] = (
+            df_data[col_stop].astype(str).str.replace(".0", "", regex=False)
+        )
+
+        # Filtra apenas o essencial para o cruzamento usando os nomes identificados
+        df_det_res = df_detail[[col_orderkey_det, col_sku, col_openqty]].rename(
+            columns={col_orderkey_det: "ORDERKEY", col_sku: "SKU", col_openqty: "OPENQTY"}
+        )
+        
+        df_dat_res = df_data[[col_orderkey_dat, "ROTA_LIMPA", "PEDIDO_ROTA"]].rename(
+            columns={col_orderkey_dat: "ORDERKEY"}
+        )
+
+        # Faz o cruzamento (Merge / PROCV) pela ORDERKEY
+        df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="inner")
+        return df_consolidado
 
     except Exception as e:
-        st.error(f"Erro ao processar os dados: {e}")
+        st.error(f"Erro ao cruzar as abas Detail e Data: {e}")
         return None
 
 
@@ -103,7 +98,7 @@ if st.sidebar.button("🔄 Atualizar Dados do GitHub"):
     st.cache_data.clear()
     st.rerun()
 
-# Carrega a base cruzada
+# Carrega a base
 df_base = carregar_e_cruzar_dados(URL_RAW)
 
 if df_base is not None:
@@ -119,19 +114,27 @@ if df_base is not None:
         df_filtrado = df_base.copy()
 
         if sku_busca:
-            df_filtrado = df_filtrado[df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)]
+            df_filtrado = df_filtrado[
+                df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)
+            ]
         if rota_busca:
-            df_filtrado = df_filtrado[df_filtrado["Rota_Limpa"].astype(str).str.contains(rota_busca, case=False)]
+            df_filtrado = df_filtrado[
+                df_filtrado["ROTA_LIMPA"]
+                .astype(str)
+                .str.contains(rota_busca, case=False)
+            ]
 
         if not df_filtrado.empty:
-            df_exibicao = pd.DataFrame({
-                "Conferido ✔": [False] * len(df_filtrado),
-                "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
-                "Pedido na Rota": df_filtrado["Pedido_Rota"],
-                "SKU": df_filtrado["SKU"],
-                "Quantia Solicitada": df_filtrado["OPENQTY"],
-                "Rota": df_filtrado["Rota_Limpa"],
-            })
+            df_exibicao = pd.DataFrame(
+                {
+                    "Conferido ✔": [False] * len(df_filtrado),
+                    "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
+                    "Pedido na Rota": df_filtrado["PEDIDO_ROTA"],
+                    "SKU": df_filtrado["SKU"],
+                    "Quantia Solicitada": df_filtrado["OPENQTY"],
+                    "Rota": df_filtrado["ROTA_LIMPA"],
+                }
+            )
 
             st.write(f"### 📋 {len(df_exibicao)} caixas encontradas:")
 
@@ -139,11 +142,19 @@ if df_base is not None:
                 df_exibicao,
                 hide_index=True,
                 use_container_width=True,
-                disabled=["Ordem (OrderKey)", "Pedido na Rota", "SKU", "Quantia Solicitada", "Rota"],
+                disabled=[
+                    "Ordem (OrderKey)",
+                    "Pedido na Rota",
+                    "SKU",
+                    "Quantia Solicitada",
+                    "Rota",
+                ],
             )
         else:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
-        st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias.")
+        st.info(
+            "💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias."
+        )
 else:
     st.info("Aguardando carregamento da base do GitHub...")
