@@ -6,12 +6,18 @@ import streamlit as st
 # =========================================================================
 # CONFIGURAÇÃO DA PÁGINA
 # =========================================================================
-st.set_page_config(page_title="Consulta de Cargas e Rotas", page_icon="📦", layout="wide")
+st.set_page_config(
+    page_title="Consulta de Cargas e Rotas", page_icon="📦", layout="wide"
+)
 
 st.title("📦 Consulta Rápida de Cargas por Rota e SKU")
-st.markdown("Busque o SKU e a rota para localizar onde o material está e realize a conferência na caixa.")
+st.markdown(
+    "Busque o SKU e a rota para localizar onde o material está e realize a conferência na caixa."
+)
+
 
 def extrair_rota_limpa(valor_rota):
+    """Extrai apenas o código da rota (ex: BRGP-BR BR0551285_BRGP -> BR0551285)"""
     if pd.isna(valor_rota):
         return "N/A"
     texto = str(valor_rota).strip()
@@ -20,56 +26,107 @@ def extrair_rota_limpa(valor_rota):
         return match.group(1).upper()
     return texto
 
-@st.cache_data(ttl=5) # Reduzido o cache para testar em tempo real
+
+def ajustar_cabecalho_dinamico(df_cru):
+    """Localiza a linha correta do cabeçalho que contém 'Order Number' e limpa o DataFrame"""
+    for i in range(min(15, len(df_cru))):
+        # Transforma a linha inteira em uma string única para checar se o termo existe ali
+        linha_texto = " ".join(df_cru.iloc[i].astype(str).lower())
+        if "order number" in linha_texto or "orderkey" in linha_texto:
+            # Define essa linha encontrada como o cabeçalho verdadeiro
+            novas_colunas = df_cru.iloc[i].astype(str).str.strip().str.upper()
+            # Substitui o "ORDER NUMBER:" (com ou sem dois pontos) pelo padrão que o código espera
+            novas_colunas = [
+                "ORDERKEY" if "ORDER" in col and "NUM" in col else col
+                for col in novas_colunas
+            ]
+
+            df_ajustado = df_cru.iloc[i + 1 :].copy()
+            df_ajustado.columns = novas_colunas
+            return df_ajustado
+    # Se não achar nada, retorna a estrutura padrão limpa em maiúsculo
+    df_cru.columns = df_cru.columns.astype(str).str.strip().str.upper()
+    return df_cru
+
+
+@st.cache_data(ttl=60)
 def carregar_dados_local():
     try:
+        # Abre o Excel diretamente do repositório local sem pular linhas estáticas
         with pd.ExcelFile("Export.xlsx", engine="openpyxl") as xls:
-            df_detail = pd.read_excel(xls, sheet_name="Detail")
-            df_data = pd.read_excel(xls, sheet_name="Data")
+            df_detail_cru = pd.read_excel(xls, sheet_name="Detail", header=None)
+            df_data_cru = pd.read_excel(xls, sheet_name="Data", header=None)
 
-        df_detail.columns = df_detail.columns.str.strip().str.upper()
-        df_data.columns = df_data.columns.str.strip().str.upper()
+        # Trata dinamicamente o cabeçalho flutuante gerado pelo relatório do WMS
+        df_detail = ajustar_cabecalho_dinamico(df_detail_cru)
+        df_data = ajustar_cabecalho_dinamico(df_data_cru)
 
-        # -----------------------------------------------------------------
-        # ÁREA DE DEBUG: Mostra o que tem dentro do arquivo na tela
-        # -----------------------------------------------------------------
-        st.write("### 🛠️ Modo Debug (Verificação de Colunas)")
-        st.write("**Colunas lidas na aba Detail:**", list(df_detail.columns))
-        st.write("**Colunas lidas na aba Data:**", list(df_data.columns))
-        
-        # Mostra as 3 primeiras linhas de cada chave para ver o formato real
-        st.write("**Exemplo de ORDERKEY na aba Detail:**", df_detail["ORDERKEY"].head(3).tolist() if "ORDERKEY" in df_detail.columns else "NÃO ENCONTRADA")
-        st.write("**Exemplo de ORDERKEY na aba Data:**", df_data["ORDERKEY"].head(3).tolist() if "ORDERKEY" in df_data.columns else "NÃO ENCONTRADA")
-        # -----------------------------------------------------------------
-
+        # Padroniza a chave de cruzamento para texto limpo em ambas as abas
         if "ORDERKEY" in df_detail.columns:
-            df_detail["ORDERKEY"] = df_detail["ORDERKEY"].astype(str).str.strip().str.replace(".0", "", regex=False)
+            df_detail["ORDERKEY"] = (
+                df_detail["ORDERKEY"]
+                .astype(str)
+                .str.strip()
+                .str.replace(".0", "", regex=False)
+            )
         if "ORDERKEY" in df_data.columns:
-            df_data["ORDERKEY"] = df_data["ORDERKEY"].astype(str).str.strip().str.replace(".0", "", regex=False)
+            df_data["ORDERKEY"] = (
+                df_data["ORDERKEY"]
+                .astype(str)
+                .str.strip()
+                .str.replace(".0", "", regex=False)
+            )
 
-        if "ROUTE" in df_data.columns:
-            df_data["ROTA_LIMPA"] = df_data["ROUTE"].apply(extrair_rota_limpa)
+        # Tratamento das colunas de Rota (procura por ROUTE)
+        coluna_rota = [c for c in df_data.columns if "ROUTE" in c]
+        if coluna_rota:
+            df_data["ROTA_LIMPA"] = df_data[coluna_rota[0]].apply(
+                extrair_rota_limpa
+            )
         else:
             df_data["ROTA_LIMPA"] = "N/A"
 
-        if "STOP" in df_data.columns:
-            df_data["PEDIDO_ROTA"] = df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
+        # Tratamento das colunas de Parada (procura por STOP)
+        coluna_stop = [c for c in df_data.columns if "STOP" in c]
+        if coluna_stop:
+            df_data["PEDIDO_ROTA"] = (
+                df_data[coluna_stop[0]]
+                .astype(str)
+                .str.replace(".0", "", regex=False)
+            )
         else:
             df_data["PEDIDO_ROTA"] = "N/A"
 
-        df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
+        # Captura as colunas de SKU e QUANTIDADE dinamicamente por correspondência de texto
+        col_sku = [c for c in df_detail.columns if "SKU" in c]
+        col_qty = [c for c in df_detail.columns if "QTY" in c or "QUANT" in c]
+
+        sku_label = col_sku[0] if col_sku else "SKU"
+        qty_label = col_qty[0] if col_qty else "OPENQTY"
+
+        # Garante que as colunas críticas existem antes de filtrar para evitar KeyError
+        df_det_res = df_detail[["ORDERKEY", sku_label, qty_label]].rename(
+            columns={sku_label: "SKU", qty_label: "OPENQTY"}
+        )
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="left")
+        # Faz o cruzamento das informações das caixas
+        df_consolidado = pd.merge(
+            df_det_res, df_dat_res, on="ORDERKEY", how="left"
+        )
         return df_consolidado
 
     except FileNotFoundError:
-        st.error("Erro: O arquivo 'Export.xlsx' não foi encontrado na pasta do projeto.")
+        st.error(
+            "Erro: O arquivo 'Export.xlsx' não foi encontrado na pasta do projeto."
+        )
         return None
     except Exception as e:
         st.error(f"Erro ao processar o arquivo: {e}")
         return None
 
+
+# Botão de controle do cache lateral
 if st.sidebar.button("🔄 Forçar Limpeza de Cache"):
     st.cache_data.clear()
     st.rerun()
@@ -87,30 +144,47 @@ if df_base is not None:
         df_filtrado = df_base.copy()
 
         if sku_busca:
-            df_filtrado = df_filtrado[df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)]
+            df_filtrado = df_filtrado[
+                df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)
+            ]
         if rota_busca:
-            df_filtrado = df_filtrado[df_filtrado["ROTA_LIMPA"].astype(str).str.contains(rota_busca, case=False)]
+            df_filtrado = df_filtrado[
+                df_filtrado["ROTA_LIMPA"]
+                .astype(str)
+                .str.contains(rota_busca, case=False)
+            ]
 
         if not df_filtrado.empty:
-            df_exibicao = pd.DataFrame({
-                "Conferido ✔": [False] * len(df_filtrado),
-                "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
-                "Pedido na Rota": df_filtrado["PEDIDO_ROTA"],
-                "SKU": df_filtrado["SKU"],
-                "Quantia Solicitada": df_filtrado["OPENQTY"],
-                "Rota": df_filtrado["ROTA_LIMPA"],
-            })
+            df_exibicao = pd.DataFrame(
+                {
+                    "Conferido ✔": [False] * len(df_filtrado),
+                    "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
+                    "Pedido na Rota": df_filtrado["PEDIDO_ROTA"],
+                    "SKU": df_filtrado["SKU"],
+                    "Quantia Solicitada": df_filtrado["OPENQTY"],
+                    "Rota": df_filtrado["ROTA_LIMPA"],
+                }
+            )
 
             st.write(f"### 📋 {len(df_exibicao)} caixas encontradas:")
+
             st.data_editor(
                 df_exibicao,
                 hide_index=True,
                 use_container_width=True,
-                disabled=["Ordem (OrderKey)", "Pedido na Rota", "SKU", "Quantia Solicitada", "Rota"],
+                disabled=[
+                    "Ordem (OrderKey)",
+                    "Pedido na Rota",
+                    "SKU",
+                    "Quantia Solicitada",
+                    "Rota",
+                ],
             )
         else:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
-        st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias.")
+        st.info(
+            "💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias."
+        )
 else:
     st.info("Aguardando carregamento da base de dados...")
