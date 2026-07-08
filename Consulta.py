@@ -5,13 +5,12 @@ import requests
 import streamlit as st
 
 # =========================================================================
-# CONFIGURAÇÃO DO REPOSITÓRIO (Link Direto e Seguro)
+# CONFIGURAÇÃO DO REPOSITÓRIO
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
 NOME_ARQUIVO = "base_consulta.xlsx"
 
-# Link alternativo direto para evitar problemas de cache do GitHub
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
 st.set_page_config(
@@ -35,68 +34,71 @@ def extrair_rota_limpa(valor_rota):
     return texto
 
 
-@st.cache_data(ttl=60)  # Reduzido para 1 minuto para limpar o cache rápido
-def carregar_e_cruzar_dados(url):
+@st.cache_data(ttl=60)
+def carregar_dados_direto(url):
     try:
-        # Forçamos os headers para evitar que o GitHub envie uma resposta em cache antiga
         headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
         resposta = requests.get(url, headers=headers)
         
         if resposta.status_code != 200:
-            st.error(
-                f"Não foi possível acessar o arquivo no GitHub (Status {resposta.status_code}). "
-                f"Verifique se o arquivo '{NOME_ARQUIVO}' está na raiz do seu repositório."
-            )
+            st.error(f"Erro ao acessar o arquivo no GitHub. Status: {resposta.status_code}")
             return None
 
         conteudo = io.BytesIO(resposta.content)
 
-        # Abre o Excel garantindo o motor correto
-        with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
-            df_detail = pd.read_excel(xls, sheet_name="Detail")
-            df_data = pd.read_excel(xls, sheet_name="Data")
+        # --- ESTRATÉGIA DE LEITURA BLINDADA ---
+        try:
+            # 1. Tenta ler como Excel Real (aba Sheet1 ou padrão)
+            df = pd.read_excel(conteudo, engine="openpyxl")
+        except Exception:
+            # 2. Se falhar (XLRDError), volta o ponteiro e lê como CSV (Tratando o disfarce do WMS)
+            conteudo.seek(0)
+            try:
+                df = pd.read_csv(conteudo, sep=",", engine="python")
+            except Exception:
+                conteudo.seek(0)
+                df = pd.read_csv(conteudo, sep=";", engine="python")
 
-        # Força os cabeçalhos para maiúsculo
-        df_detail.columns = df_detail.columns.str.strip().str.upper()
-        df_data.columns = df_data.columns.str.strip().str.upper()
+        # Força os nomes de colunas para letras maiúsculas e remove espaços
+        df.columns = df.columns.str.strip().str.upper()
 
-        # Mapeamento Detail
-        col_orderkey_det = "ORDERKEY" if "ORDERKEY" in df_detail.columns else df_detail.columns[2]
-        col_sku = "SKU" if "SKU" in df_detail.columns else [c for c in df_detail.columns if "SKU" in c][0]
-        col_openqty = "OPENQTY" if "OPENQTY" in df_detail.columns else [c for c in df_detail.columns if "QTY" in c][0]
+        # Localização dinâmica e inteligente das colunas essenciais
+        col_orderkey = "ORDERKEY" if "ORDERKEY" in df.columns else df.columns[2]
+        col_sku = "SKU" if "SKU" in df.columns else [c for c in df.columns if "SKU" in c][0]
+        col_openqty = "OPENQTY" if "OPENQTY" in df.columns else ([c for c in df.columns if "QTY" in c][0] if [c for c in df.columns if "QTY" in c] else df.columns[10])
+        col_route = "ROUTE" if "ROUTE" in df.columns else [c for c in df.columns if "ROUTE" in c][0]
+        col_stop = "STOP" if "STOP" in df.columns else ([c for c in df.columns if "STOP" in c][0] if [c for c in df.columns if "STOP" in c] else None)
 
-        # Mapeamento Data
-        col_orderkey_dat = "ORDERKEY" if "ORDERKEY" in df_data.columns else df_data.columns[2]
-        col_route = "ROUTE" if "ROUTE" in df_data.columns else [c for c in df_data.columns if "ROUTE" in c][0]
-        col_stop = "STOP" if "STOP" in df_data.columns else [c for c in df_data.columns if "STOP" in c][0]
+        # Tratamento dos dados para exibição na tela
+        df["ROTA_LIMPA"] = df[col_route].apply(extrair_rota_limpa)
+        
+        if col_stop:
+            df["PEDIDO_ROTA"] = df[col_stop].astype(str).str.replace(".0", "", regex=False)
+        else:
+            df["PEDIDO_ROTA"] = "1"
 
-        # Tratamento das colunas de Rota e Parada (Stop)
-        df_data["ROTA_LIMPA"] = df_data[col_route].apply(extrair_rota_limpa)
-        df_data["PEDIDO_ROTA"] = df_data[col_stop].astype(str).str.replace(".0", "", regex=False)
-
-        # Resumos para junção
-        df_det_res = df_detail[[col_orderkey_det, col_sku, col_openqty]].rename(
-            columns={col_orderkey_det: "ORDERKEY", col_sku: "SKU", col_openqty: "OPENQTY"}
-        )
-        df_dat_res = df_data[[col_orderkey_dat, "ROTA_LIMPA", "PEDIDO_ROTA"]].rename(
-            columns={col_orderkey_dat: "ORDERKEY"}
-        )
-
-        # PROCV / Join
-        df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="inner")
-        return df_consolidado
+        # Consolidação da tabela estruturada
+        df_final = pd.DataFrame({
+            "ORDERKEY": df[col_orderkey],
+            "SKU": df[col_sku],
+            "OPENQTY": df[col_openqty],
+            "ROTA_LIMPA": df["ROTA_LIMPA"],
+            "PEDIDO_ROTA": df["PEDIDO_ROTA"]
+        })
+        
+        return df_final
 
     except Exception as e:
-        st.error(f"Erro ao processar as abas da planilha: {e}")
+        st.error(f"Erro ao processar as colunas da tabela: {e}")
         return None
 
 
-# Botão para limpar a memória do Streamlit à força
+# Botão de controle do cache lateral
 if st.sidebar.button("🔄 Forçar Limpeza de Cache"):
     st.cache_data.clear()
     st.rerun()
 
-df_base = carregar_e_cruzar_dados(URL_RAW)
+df_base = carregar_dados_direto(URL_RAW)
 
 if df_base is not None:
     col1, col2 = st.columns(2)
