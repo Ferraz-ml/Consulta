@@ -1,191 +1,142 @@
+import io
 import re
 import pandas as pd
-from nicegui import ui
+import requests
+import streamlit as st
 
-# Estado global para armazenar o DataFrame unificado
-state = {"df_consolidado": None}
+# =========================================================================
+# CONFIGURAÇÃO DO REPOSITÓRIO (Ajuste com seus dados do GitHub)
+# =========================================================================
+USUARIO_GITHUB = "Ferraz-ml"  # Seu usuário do GitHub
+NOME_REPOSITORIO = "app-consulta-caixas"  # Nome do repositório atual
+NOME_ARQUIVO = "Export.xlsx"  # Nome do arquivo que você subiu lá
+
+# URL do arquivo cru (Raw) no GitHub
+URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
+
+# Configuração da página do Streamlit
+st.set_page_config(
+    page_title="Consulta de Cargas e Rotas", page_icon="📦", layout="wide"
+)
+
+st.title("📦 Consulta Rápida de Cargas por Rota e SKU")
+st.markdown(
+    "Busque o SKU e a rota para localizar onde o material está e realize a conferência na caixa."
+)
 
 
 def extrair_rota_limpa(valor_rota):
-    """
-    Remove os prefixos e sufixos da rota.
-    Exemplo: 'BRGP-BR BR0551285_BRGP' -> 'BR0551285'
-    """
+    """Extrai apenas o código da rota (ex: BR0551285)"""
     if pd.isna(valor_rota):
         return "N/A"
-
     texto = str(valor_rota).strip()
-    # Expressão regular para capturar o padrão BR seguido de números (ex: BR0551285)
     match = re.search(r"(BR\d+)", texto, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+    return texto
 
-    return texto  # Retorna o original caso não encontre o padrão
 
-
-def handle_upload(e):
-    """Processa o upload do Excel e faz o cruzamento das abas Data e Detail"""
+# Função com cache para não ficar baixando o arquivo pesado do GitHub a cada clique
+@st.cache_data(ttl=300)  # Limpa o cache a cada 5 minutos automaticamente
+def carregar_e_cruzar_dados(url):
     try:
-        # Lendo o arquivo Excel diretamente da memória (com as duas abas)
-        conteudo_arquivo = e.content
+        resposta = requests.get(url)
+        if resposta.status_code != 200:
+            st.error(
+                f"Erro ao acessar o GitHub (Status {resposta.status_code}). Verifique se o arquivo está na raiz do repositório."
+            )
+            return None
 
-        ui.notify(
-            "Processando planilhas... Aguarde.", type="ongoing", duration=2
-        )
+        # Carrega as abas direto da memória
+        conteudo = io.BytesIO(resposta.content)
+        df_detail = pd.read_excel(conteudo, sheet_name="Detail")
+        df_data = pd.read_excel(conteudo, sheet_name="Data")
 
-        # 1. Carrega as duas abas necessárias
-        df_detail = pd.read_excel(conteudo_arquivo, sheet_name="Detail")
-        df_data = pd.read_excel(conteudo_arquivo, sheet_name="Data")
-
-        # 2. Garante que os nomes das colunas estão limpos (sem espaços extras)
+        # Limpeza de colunas
         df_detail.columns = df_detail.columns.str.strip()
         df_data.columns = df_data.columns.str.strip()
 
-        # 3. Limpa e isola a rota na tabela Data (Coluna GY)
-        # Se a coluna se chamar exatamente 'GY', usamos ela, senão tratamos pelo índice ou nome real
-        coluna_rota_original = (
-            "GY" if "GY" in df_data.columns else df_data.columns[206]
-        )  # Ajuste preventivo
+        # Isola a rota limpa na tabela Data (Coluna GY / Índice 206)
+        coluna_rota = "GY" if "GY" in df_data.columns else df_data.columns[206]
+        df_data["Rota_Limpa"] = df_data[coluna_rota].apply(extrair_rota_limpa)
 
-        df_data["Rota_Limpa"] = df_data[coluna_rota_original].apply(
-            extrair_rota_limpa
+        # Seleciona apenas o que importa e faz o PROCV (Merge) pela OrderKey
+        df_det_res = df_detail[["OrderKey", "SKU", "OpenQty"]]
+        df_dat_res = df_data[["OrderKey", "Rota_Limpa"]]
+
+        df_consolidado = pd.merge(
+            df_det_res, df_dat_res, on="OrderKey", how="inner"
+        )
+        return df_consolidado
+    except Exception as e:
+        st.error(f"Erro ao processar as abas do WMS: {e}")
+        return None
+
+
+# Botão manual para forçar a atualização caso você mude o Excel no GitHub
+if st.sidebar.button("🔄 Atualizar Dados do GitHub"):
+    st.cache_data.clear()
+    st.rerun()
+
+# Carrega a base
+df_base = carregar_e_cruzar_dados(URL_RAW)
+
+if df_base is not None:
+    # Área de Filtros lado a lado
+    col1, col2 = st.columns(2)
+    with col1:
+        sku_busca = st.text_input("🔍 Digite o SKU:", placeholder="Ex: 123456")
+    with col2:
+        rota_busca = st.text_input(
+            "📍 Digite a Rota:", placeholder="Ex: BR0551285"
         )
 
-        # 4. Seleciona apenas as colunas que importam para o cruzamento
-        df_detail_resumido = df_detail[["OrderKey", "SKU", "OpenQty"]]
-        df_data_resumido = df_data[["OrderKey", "Rota_Limpa"]]
+    # Executa o filtro dinâmico se houver digitação
+    if sku_busca or rota_busca:
+        df_filtrado = df_base.copy()
 
-        # 5. Faz o "PROCV" (Merge) unindo as duas tabelas pela chave OrderKey
-        df_final = pd.merge(
-            df_detail_resumido, df_data_resumido, on="OrderKey", how="inner"
+        if sku_busca:
+            df_filtrado = df_filtrado[
+                df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)
+            ]
+        if rota_busca:
+            df_filtrado = df_filtrado[
+                df_filtrado["Rota_Limpa"]
+                .astype(str)
+                .str.contains(rota_busca, case=False)
+            ]
+
+        if not df_filtrado.empty:
+            # Prepara a tabela estruturada
+            df_exibicao = pd.DataFrame(
+                {
+                    "Conferido ✔": [False] * len(df_filtrado),
+                    "Ordem de Carregamento": df_filtrado["OrderKey"],
+                    "SKU": df_filtrado["SKU"],
+                    "Quantia Solicitada": df_filtrado["OpenQty"],
+                    "Rota": df_filtrado["Rota_Limpa"],
+                }
+            )
+
+            st.write(f"### 📋 {len(df_exibicao)} caixas encontradas:")
+
+            # O Data Editor renderiza a caixinha interativa (Checkbox) no 'Conferido ✔'
+            st.data_editor(
+                df_exibicao,
+                hide_index=True,
+                use_container_width=True,
+                disabled=[
+                    "Ordem de Carregamento",
+                    "SKU",
+                    "Quantia Solicitada",
+                    "Rota",
+                ],  # Bloqueia edição do resto
+            )
+        else:
+            st.warning("Nenhum registro encontrado para os filtros aplicados.")
+    else:
+        st.info(
+            "💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias."
         )
-
-        # Armazena o resultado final no estado do app
-        state["df_consolidado"] = df_final
-        ui.notify(
-            "Base WMS (Data + Detail) consolidada com sucesso!", type="positive"
-        )
-
-    except Exception as ex:
-        ui.notify(
-            f"Erro ao processar as abas do Excel: {ex}",
-            type="negative",
-            duration=5,
-        )
-
-
-def realizar_consulta(sku_input, rota_input, grid):
-    """Filtra os dados consolidados e joga no AG Grid"""
-    df = state["df_consolidado"]
-    if df is None:
-        ui.notify(
-            "Por favor, carregue o arquivo Excel com as abas Data e Detail primeiro.",
-            type="warning",
-        )
-        return
-
-    sku_alvo = sku_input.value.strip() if sku_input.value else ""
-    rota_alvo = rota_input.value.strip() if rota_input.value else ""
-
-    if not sku_alvo and not rota_alvo:
-        ui.notify(
-            "Insira um SKU ou uma Rota para pesquisar.", type="warning"
-        )
-        return
-
-    dados_filtrados = df.copy()
-
-    # Aplica os filtros digitados pelo usuário
-    if sku_alvo:
-        dados_filtrados = dados_filtrados[
-            dados_filtrados["SKU"].astype(str).str.contains(sku_alvo, case=False)
-        ]
-    if rota_alvo:
-        dados_filtrados = dados_filtrados[
-            dados_filtrados["Rota_Limpa"]
-            .astype(str)
-            .str.contains(rota_alvo, case=False)
-        ]
-
-    # Monta as linhas para a tabela visual
-    linhas_tabela = []
-    for _, row in dados_filtrados.iterrows():
-        linhas_tabela.append(
-            {
-                "verificado": False,
-                "ordem": row.get("OrderKey", "N/A"),
-                "sku": row.get("SKU", "N/A"),
-                "quantidade": row.get("OpenQty", 0),
-                "rota": row.get("Rota_Limpa", "N/A"),
-            }
-        )
-
-    # Atualiza o componente na tela
-    grid.options["rowData"] = linhas_tabela
-    grid.update()
-    ui.notify(f"{len(linhas_tabela)} registros encontrados.", type="info")
-
-
-# --- INTERFACE GRÁFICA (NiceGUI) ---
-ui.dark_mode(True)
-
-with ui.card().classes("w-full max-w-4xl mx-auto q-pa-md mt-4"):
-    ui.label("Consulta de Cargas por Rota e SKU").classes(
-        "text-h5 font-bold text-primary"
-    )
-    ui.markdown(
-        "Carregue a planilha de exportação do WMS. O sistema fará o cruzamento automático entre as abas **Data** e **Detail**."
-    )
-
-    # Área de Upload
-    ui.upload(
-        label="Arraste o arquivo Excel completo aqui",
-        on_upload=handle_upload,
-        auto_upload=True,
-    ).classes("w-full mb-4")
-
-    # Filtros de Busca
-    with ui.row().classes("w-full gap-4 items-center mb-4"):
-        sku_field = ui.input(
-            label="SKU (Coluna D)", placeholder="Digite o SKU..."
-        ).classes("flex-1")
-        rota_field = ui.input(
-            label="Rota (Filtra pelo código limpo)",
-            placeholder="Ex: BR0551285...",
-        ).classes("flex-1")
-        btn_consultar = ui.button("Consultar", icon="search").classes(
-            "q-px-lg h-14"
-        )
-
-    ui.separator().classes("my-2")
-
-    # Definição das colunas com o quadradinho de check
-    defs_colunas = [
-        {
-            "headerName": "Ok",
-            "field": "verificado",
-            "checkboxSelection": True,
-            "headerCheckboxSelection": True,
-            "width": 80,
-        },
-        {"headerName": "Ordem (OrderKey)", "field": "ordem", "flex": 1},
-        {"headerName": "SKU", "field": "sku", "width": 150},
-        {"headerName": "Quantidade (OpenQty)", "field": "quantidade", "width": 160},
-        {"headerName": "Rota (Limpa)", "field": "rota", "width": 150},
-    ]
-
-    grid_resultados = ui.aggrid(
-        {
-            "columnDefs": defs_colunas,
-            "rowData": [],
-            "rowSelection": "multiple",
-            "animateRows": True,
-        }
-    ).classes("w-full h-96")
-
-    btn_consultar.on(
-        "click",
-        lambda: realizar_consulta(sku_field, rota_field, grid_resultados),
-    )
-
-ui.run(title="Consulta e Picking WMS", port=8083)
+else:
+    st.info("Aguardando carregamento da base do GitHub...")
