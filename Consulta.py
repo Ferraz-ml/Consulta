@@ -30,8 +30,9 @@ def extrair_rota_limpa(valor_rota):
 def ajustar_cabecalho_dinamico(df_cru):
     """Localiza a linha correta do cabeçalho que contém 'Order Number' e limpa o DataFrame"""
     for i in range(min(15, len(df_cru))):
-        # Transforma a linha inteira em uma string única para checar se o termo existe ali
-        linha_texto = " ".join(df_cru.iloc[i].astype(str).lower())
+        # CORREÇÃO: Transforma a linha em string e depois aplica o .lower() na string final
+        linha_texto = " ".join(df_cru.iloc[i].astype(str)).lower()
+
         if "order number" in linha_texto or "orderkey" in linha_texto:
             # Define essa linha encontrada como o cabeçalho verdadeiro
             novas_colunas = df_cru.iloc[i].astype(str).str.strip().str.upper()
@@ -44,6 +45,7 @@ def ajustar_cabecalho_dinamico(df_cru):
             df_ajustado = df_cru.iloc[i + 1 :].copy()
             df_ajustado.columns = novas_colunas
             return df_ajustado
+
     # Se não achar nada, retorna a estrutura padrão limpa em maiúsculo
     df_cru.columns = df_cru.columns.astype(str).str.strip().str.upper()
     return df_cru
