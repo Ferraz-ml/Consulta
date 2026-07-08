@@ -5,7 +5,7 @@ import requests
 import streamlit as st
 
 # =========================================================================
-# CONFIGURAÇÃO DO REPOSITÓRIO (Ajustado exatamente para o seu GitHub)
+# CONFIGURAÇÃO DO REPOSITÓRIO
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
@@ -13,7 +13,6 @@ NOME_ARQUIVO = "Export.xlsx"
 
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
-# Configuração da página do Streamlit
 st.set_page_config(
     page_title="Consulta de Cargas e Rotas", page_icon="📦", layout="wide"
 )
@@ -25,7 +24,7 @@ st.markdown(
 
 
 def extrair_rota_limpa(valor_rota):
-    """Extrai apenas o código da rota (ex: BR0551285)"""
+    """Extrai apenas o código da rota (ex: BRGP-BR BR0551285_BRGP -> BR0551285)"""
     if pd.isna(valor_rota):
         return "N/A"
     texto = str(valor_rota).strip()
@@ -36,7 +35,7 @@ def extrair_rota_limpa(valor_rota):
 
 
 @st.cache_data(ttl=300)
-def carregar_dados_direto(url):
+def carregar_e_cruzar_dados(url):
     try:
         resposta = requests.get(url)
         if resposta.status_code != 200:
@@ -47,48 +46,35 @@ def carregar_dados_direto(url):
 
         conteudo = io.BytesIO(resposta.content)
 
-        # Lê a planilha única (sem especificar abas para evitar o erro)
-        try:
-            df = pd.read_excel(conteudo)
-        except Exception:
-            conteudo.seek(0)
-            df = pd.read_csv(conteudo, sep=None, engine="python")
+        # Força a leitura das abas usando o motor openpyxl para evitar o erro de abas inválidas
+        with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
+            df_detail = pd.read_excel(xls, sheet_name="Detail")
+            df_data = pd.read_excel(xls, sheet_name="Data")
 
-        # Limpa espaços em branco dos nomes das colunas
-        df.columns = df.columns.str.strip()
+        # Limpa espaços ocultos nos nomes das colunas
+        df_detail.columns = df_detail.columns.str.strip()
+        df_data.columns = df_data.columns.str.strip()
 
-        # Mapeamento dinâmico baseado nos nomes exatos que estão no seu WMS
-        col_ordem = "ORDERKEY" if "ORDERKEY" in df.columns else "OrderKey"
-        col_sku = "SKU" if "SKU" in df.columns else "Sku"
-        col_qtd = "OPENQTY" if "OPENQTY" in df.columns else "OpenQty"
-
-        # Identifica a coluna da rota (procura por colunas que contenham "ROUTE" ou assume a posição padrão)
-        colunas_rota_possiveis = [c for c in df.columns if "ROUTE" in c.upper()]
-        if colunas_rota_possiveis:
-            col_rota = colunas_rota_possiveis[0]
-        else:
-            # Caso não ache por nome, tenta pegar pelo índice 206 (GY) se houver colunas suficientes, ou a última
-            col_rota = (
-                df.columns[206] if len(df.columns) > 206 else df.columns[-1]
-            )
-
-        # Cria a coluna de rota limpa de forma segura
-        df["Rota_Limpa"] = df[col_rota].apply(extrair_rota_limpa)
-
-        # Retorna apenas o feijão com arroz que precisamos pra tela
-        df_resumido = pd.DataFrame(
-            {
-                "OrderKey": df[col_ordem],
-                "SKU": df[col_sku],
-                "OpenQty": df[col_qtd],
-                "Rota_Limpa": df["Rota_Limpa"],
-            }
+        # Tratamento da rota (coluna ROUTE) e pedido (coluna STOP)
+        df_data["Rota_Limpa"] = df_data["ROUTE"].apply(extrair_rota_limpa)
+        df_data["Pedido_Rota"] = (
+            df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
         )
 
-        return df_resumido
+        # Seleciona as colunas exatas encontradas no seu arquivo do WMS
+        df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
+        df_dat_res = df_data[["ORDERKEY", "Rota_Limpa", "Pedido_Rota"]]
+
+        # Faz o PROCV (Merge) dinâmico entre as tabelas
+        df_consolidado = pd.merge(
+            df_det_res, df_dat_res, on="ORDERKEY", how="inner"
+        )
+        return df_consolidado
 
     except Exception as e:
-        st.error(f"Erro ao processar os dados do WMS: {e}")
+        st.error(
+            f"Erro ao ler as abas 'Detail' e 'Data'. Verifique o arquivo no GitHub. Detalhes: {e}"
+        )
         return None
 
 
@@ -97,8 +83,8 @@ if st.sidebar.button("🔄 Atualizar Dados do GitHub"):
     st.cache_data.clear()
     st.rerun()
 
-# Carrega a base limpa
-df_base = carregar_dados_direto(URL_RAW)
+# Carrega a base cruzada
+df_base = carregar_e_cruzar_dados(URL_RAW)
 
 if df_base is not None:
     # Área de Filtros
@@ -126,12 +112,14 @@ if df_base is not None:
             ]
 
         if not df_filtrado.empty:
+            # Monta a tabela final adicionando o número do pedido na rota
             df_exibicao = pd.DataFrame(
                 {
                     "Conferido ✔": [False] * len(df_filtrado),
-                    "Ordem de Carregamento": df_filtrado["OrderKey"],
+                    "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
+                    "Pedido na Rota": df_filtrado["Pedido_Rota"],
                     "SKU": df_filtrado["SKU"],
-                    "Quantia Solicitada": df_filtrado["OpenQty"],
+                    "Quantia Solicitada": df_filtrado["OPENQTY"],
                     "Rota": df_filtrado["Rota_Limpa"],
                 }
             )
@@ -143,7 +131,8 @@ if df_base is not None:
                 hide_index=True,
                 use_container_width=True,
                 disabled=[
-                    "Ordem de Carregamento",
+                    "Ordem (OrderKey)",
+                    "Pedido na Rota",
                     "SKU",
                     "Quantia Solicitada",
                     "Rota",
