@@ -10,37 +10,42 @@ st.set_page_config(
     page_title="Consulta de Cargas", page_icon="📦", layout="wide"
 )
 
-# INJEÇÃO DE DESIGN 100% AZUL ESCURO NO APLICATIVO INTEIRO
+# INJEÇÃO DE DESIGN 100% AZUL ESCURO COM BANNER 3D AZUL-CÉU
 st.markdown(
     """
     <style>
     /* 1. Altera o fundo de toda a aplicação (Área principal) */
     .stApp {
-        background-color: #0f172a !important; /* Azul escuro profundo */
+        background-color: #0f172a !important; 
     }
     
-    /* 2. Altera o fundo da barra lateral (Sidebar), caso utilize */
+    /* 2. Altera o fundo da barra lateral (Sidebar) */
     [data-testid="stSidebar"] {
-        background-color: #1e293b !important; /* Azul escuro ligeiramente mais claro para contraste */
+        background-color: #1e293b !important; 
     }
 
-    /* 3. Ajusta a cor padrão de todos os textos informativos e títulos comuns */
+    /* 3. Ajusta a cor padrão de todos os textos informativos */
     .stMarkdown, p, span, label, h3 {
-        color: #f1f5f9 !important; /* Branco fosco / Cinza claro para leitura confortável */
+        color: #f1f5f9 !important; 
     }
 
-    /* 4. Estilização do Banner Centralizado de Consulta */
+    /* 4. Estilização do Banner Centralizado com Efeito 3D e Degradê Azul-Céu */
     .custom-header {
-        background: linear-gradient(135px, #1e293b 0%, #0f172a 100%);
-        background-image: radial-gradient(rgba(0, 210, 255, 0.15) 1px, transparent 1px);
-        background-size: 24px 24px;
+        /* Degradê marcante que vai do azul-céu vivo ao azul escuro profundo */
+        background: linear-gradient(135deg, #0284c7 0%, #0369a1 40%, #0f172a 100%);
         padding: 35px 20px;
         border-radius: 12px;
         text-align: center;
         margin-bottom: 30px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-        border: 1px solid rgba(0, 210, 255, 0.2);
-        border-bottom: 4px solid #00d2ff;
+        
+        /* Combinação de sombras internas para criar o efeito 3D (relevo e luz no topo) */
+        box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.4), 
+                    inset 0 10px 20px rgba(255, 255, 255, 0.1),
+                    inset 0 -5px 15px rgba(0, 0, 0, 0.3),
+                    0 10px 25px rgba(0,0,0,0.5);
+                    
+        border: 1px solid #0284c7;
+        border-bottom: 5px solid #0369a1;
     }
     
     .custom-title {
@@ -51,23 +56,24 @@ st.markdown(
         letter-spacing: 4px;
         margin: 0;
         text-transform: uppercase;
-        text-shadow: 0px 4px 12px rgba(0,0,0,0.7);
+        text-shadow: 0px 4px 8px rgba(0,0,0,0.5);
     }
     
     .custom-subtitle {
-        color: #00d2ff !important;
+        color: #e0f2fe !important; /* Azul muito claro para harmonizar com o azul-céu */
         font-size: 1.05rem;
         margin-top: 12px;
         margin-bottom: 0;
-        font-weight: 400;
+        font-weight: 500;
         letter-spacing: 2px;
         text-transform: uppercase;
+        text-shadow: 0px 2px 4px rgba(0,0,0,0.3);
     }
     
-    /* Extra: Customização sutil dos inputs para não sumirem no fundo escuro */
+    /* Customização dos inputs */
     div[data-baseweb="input"] {
         background-color: #1e293b !important;
-        border-color: rgba(0, 210, 255, 0.3) !important;
+        border-color: rgba(2, 132, 199, 0.4) !important;
     }
     input {
         color: #ffffff !important;
@@ -81,10 +87,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-# O restante das suas funções estruturadas continua exatamente igual abaixo...
-# (def extrair_quatro_digitos_rota, limpar_serie_texto, carregar_dados_local, etc.)
-
 
 def extrair_quatro_digitos_rota(valor_rota):
     """
