@@ -39,19 +39,44 @@ def carregar_dados_local():
         df_detail.columns = df_detail.columns.str.strip().str.upper()
         df_data.columns = df_data.columns.str.strip().str.upper()
 
-        # Tratamento das colunas de Rota e Parada
-        df_data["ROTA_LIMPA"] = df_data["ROUTE"].apply(extrair_rota_limpa)
-        df_data["PEDIDO_ROTA"] = (
-            df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
-        )
+        # =========================================================================
+        # CORREÇÃO CRUCIAL: Força a chave ORDERKEY a ser String limpa nas duas abas
+        # =========================================================================
+        if "ORDERKEY" in df_detail.columns:
+            df_detail["ORDERKEY"] = (
+                df_detail["ORDERKEY"]
+                .astype(str)
+                .str.strip()
+                .str.replace(".0", "", regex=False)
+            )
+        if "ORDERKEY" in df_data.columns:
+            df_data["ORDERKEY"] = (
+                df_data["ORDERKEY"]
+                .astype(str)
+                .str.strip()
+                .str.replace(".0", "", regex=False)
+            )
+
+        # Tratamento das colunas de Rota e Parada (STOP)
+        if "ROUTE" in df_data.columns:
+            df_data["ROTA_LIMPA"] = df_data["ROUTE"].apply(extrair_rota_limpa)
+        else:
+            df_data["ROTA_LIMPA"] = "N/A"
+
+        if "STOP" in df_data.columns:
+            df_data["PEDIDO_ROTA"] = (
+                df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
+            )
+        else:
+            df_data["PEDIDO_ROTA"] = "N/A"
 
         # Filtrando colunas essenciais de cada aba
         df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Faz o PROCV interno (Merge) combinando as informações das caixas
+        # Faz o cruzamento (Merge) mapeando o Detail como tabela principal (left join)
         df_consolidado = pd.merge(
-            df_det_res, df_dat_res, on="ORDERKEY", how="inner"
+            df_det_res, df_dat_res, on="ORDERKEY", how="left"
         )
         return df_consolidado
 
