@@ -10,52 +10,79 @@ st.set_page_config(
     page_title="Consulta de Cargas", page_icon="📦", layout="wide"
 )
 
-# INJEÇÃO DE DESIGN LOGÍSTICO (FUNDO AZUL ESCURO GRADIENTE + FLUXOS)
+# INJEÇÃO DE DESIGN 100% AZUL ESCURO NO APLICATIVO INTEIRO
 st.markdown(
     """
     <style>
+    /* 1. Altera o fundo de toda a aplicação (Área principal) */
+    .stApp {
+        background-color: #0f172a !important; /* Azul escuro profundo */
+    }
+    
+    /* 2. Altera o fundo da barra lateral (Sidebar), caso utilize */
+    [data-testid="stSidebar"] {
+        background-color: #1e293b !important; /* Azul escuro ligeiramente mais claro para contraste */
+    }
+
+    /* 3. Ajusta a cor padrão de todos os textos informativos e títulos comuns */
+    .stMarkdown, p, span, label, h3 {
+        color: #f1f5f9 !important; /* Branco fosco / Cinza claro para leitura confortável */
+    }
+
+    /* 4. Estilização do Banner Centralizado de Consulta */
     .custom-header {
-        background: linear-gradient(135px, #0f2027 0%, #203a43 50%, #2c5364 100%);
-        background-image: radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px), 
-                          radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-        background-size: 20px 20px;
-        background-position: 0 0, 10px 10px;
-        padding: 30px;
+        background: linear-gradient(135px, #1e293b 0%, #0f172a 100%);
+        background-image: radial-gradient(rgba(0, 210, 255, 0.15) 1px, transparent 1px);
+        background-size: 24px 24px;
+        padding: 35px 20px;
         border-radius: 12px;
         text-align: center;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        margin-bottom: 30px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+        border: 1px solid rgba(0, 210, 255, 0.2);
         border-bottom: 4px solid #00d2ff;
     }
+    
     .custom-title {
-        color: #ffffff;
+        color: #ffffff !important;
         font-family: 'Helvetica Neue', Arial, sans-serif;
-        font-size: 3rem;
-        font-weight: 700;
-        letter-spacing: 2px;
+        font-size: 3.2rem;
+        font-weight: 800;
+        letter-spacing: 4px;
         margin: 0;
         text-transform: uppercase;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+        text-shadow: 0px 4px 12px rgba(0,0,0,0.7);
     }
+    
     .custom-subtitle {
-        color: #00d2ff;
-        font-size: 1rem;
-        margin-top: 8px;
+        color: #00d2ff !important;
+        font-size: 1.05rem;
+        margin-top: 12px;
         margin-bottom: 0;
-        font-weight: 300;
-        letter-spacing: 1px;
+        font-weight: 400;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+    }
+    
+    /* Extra: Customização sutil dos inputs para não sumirem no fundo escuro */
+    div[data-baseweb="input"] {
+        background-color: #1e293b !important;
+        border-color: rgba(0, 210, 255, 0.3) !important;
+    }
+    input {
+        color: #ffffff !important;
     }
     </style>
     
     <div class="custom-header">
         <h1 class="custom-title">📦 CONSULTA</h1>
-        <p class="custom-subtitle">SISTEMA INTEGRADO DE CONFERÊNCIA DE ROTAS E SKUs</p>
+        <p class="custom-subtitle">Controlo de Fluxo Last-Mile & Validação de Rotas</p>
     </div>
     """,
     unsafe_allow_html=True
 )
 
-# O restante das funções do seu código continua exatamente igual abaixo...
+# O restante das suas funções estruturadas continua exatamente igual abaixo...
 # (def extrair_quatro_digitos_rota, limpar_serie_texto, carregar_dados_local, etc.)
 
 
