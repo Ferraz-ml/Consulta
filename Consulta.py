@@ -5,11 +5,11 @@ import requests
 import streamlit as st
 
 # =========================================================================
-# CONFIGURAÇÃO DO REPOSITÓRIO (NOME CORRIGIDO CONFORME O ERRO 404)
+# CONFIGURAÇÃO DO REPOSITÓRIO (Corrigido com o "E" Maiúsculo)
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
-NOME_ARQUIVO = "Export.xlsx"  # <--- Mudamos de 'base_consulta.xlsx' para 'Export.xlsx'
+NOME_ARQUIVO = "Export.xlsx"  # <--- Exatamente como está no seu GitHub!
 
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
@@ -43,29 +43,30 @@ def carregar_dados_direto(url):
         if resposta.status_code != 200:
             st.error(
                 f"Erro 404: O arquivo '{NOME_ARQUIVO}' não foi encontrado no seu GitHub. "
-                f"Certifique-se de que o nome do arquivo no repositório está escrito exatamente como '{NOME_ARQUIVO}'."
+                f"Verifique se o nome do arquivo no repositório está idêntico a '{NOME_ARQUIVO}'."
             )
             return None
 
         conteudo = io.BytesIO(resposta.content)
 
-        # Como os dados reais vêm em abas separadas ('Detail' e 'Data') no Excel gerado pelo WMS:
+        # Abre o Excel forçando o motor openpyxl e lendo as duas abas reais
         with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
             df_detail = pd.read_excel(xls, sheet_name="Detail")
             df_data = pd.read_excel(xls, sheet_name="Data")
 
-        # Força os nomes de colunas para letras maiúsculas e remove espaços
+        # Limpa e padroniza os nomes das colunas para maiúsculo
         df_detail.columns = df_detail.columns.str.strip().str.upper()
         df_data.columns = df_data.columns.str.strip().str.upper()
 
-        # Mapeamento com base nas colunas reais das suas abas
+        # Tratamento das colunas de Rota e Parada
         df_data["ROTA_LIMPA"] = df_data["ROUTE"].apply(extrair_rota_limpa)
         df_data["PEDIDO_ROTA"] = df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
 
+        # Filtrando colunas essenciais de cada aba
         df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Faz o PROCV / Cruzamento de dados entre as abas
+        # Faz o PROCV interno (Merge) combinando as informações das caixas
         df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="inner")
         return df_consolidado
 
