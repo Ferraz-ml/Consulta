@@ -5,11 +5,11 @@ import requests
 import streamlit as st
 
 # =========================================================================
-# CONFIGURAÇÃO DO REPOSITÓRIO
+# CONFIGURAÇÃO DO REPOSITÓRIO (NOME CORRIGIDO)
 # =========================================================================
 USUARIO_GITHUB = "Ferraz-ml"
 NOME_REPOSITORIO = "app-consulta-caixas"
-NOME_ARQUIVO = "Export.xlsx"
+NOME_ARQUIVO = "base_consulta.xlsx"  # <--- CORRIGIDO PARA O SEU ARQUIVO REAL
 
 URL_RAW = f"https://raw.githubusercontent.com/{USUARIO_GITHUB}/{NOME_REPOSITORIO}/main/{NOME_ARQUIVO}"
 
@@ -40,41 +40,61 @@ def carregar_e_cruzar_dados(url):
         resposta = requests.get(url)
         if resposta.status_code != 200:
             st.error(
-                f"Erro ao acessar o GitHub (Status {resposta.status_code})."
+                f"Erro ao acessar o arquivo '{NOME_ARQUIVO}' no GitHub. Verifique se o nome do arquivo está idêntico (maiúsculas/minúsculas) e se a extensão é .xlsx ou .csv."
             )
             return None
 
         conteudo = io.BytesIO(resposta.content)
 
-        # Força a leitura das abas usando o motor openpyxl para evitar o erro de abas inválidas
-        with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
-            df_detail = pd.read_excel(xls, sheet_name="Detail")
-            df_data = pd.read_excel(xls, sheet_name="Data")
+        # Tenta ler como abas de Excel. Se falhar (por ser um CSV disfarçado), lê como CSV plano.
+        try:
+            with pd.ExcelFile(conteudo, engine="openpyxl") as xls:
+                df_detail = pd.read_excel(xls, sheet_name="Detail")
+                df_data = pd.read_excel(xls, sheet_name="Data")
+            
+            df_detail.columns = df_detail.columns.str.strip()
+            df_data.columns = df_data.columns.str.strip()
+            
+            df_data["Rota_Limpa"] = df_data["ROUTE"].apply(extrair_rota_limpa)
+            df_data["Pedido_Rota"] = df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
+            
+            df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
+            df_dat_res = df_data[["ORDERKEY", "Rota_Limpa", "Pedido_Rota"]]
+            
+            df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="inner")
+            return df_consolidado
 
-        # Limpa espaços ocultos nos nomes das colunas
-        df_detail.columns = df_detail.columns.str.strip()
-        df_data.columns = df_data.columns.str.strip()
-
-        # Tratamento da rota (coluna ROUTE) e pedido (coluna STOP)
-        df_data["Rota_Limpa"] = df_data["ROUTE"].apply(extrair_rota_limpa)
-        df_data["Pedido_Rota"] = (
-            df_data["STOP"].astype(str).str.replace(".0", "", regex=False)
-        )
-
-        # Seleciona as colunas exatas encontradas no seu arquivo do WMS
-        df_det_res = df_detail[["ORDERKEY", "SKU", "OPENQTY"]]
-        df_dat_res = df_data[["ORDERKEY", "Rota_Limpa", "Pedido_Rota"]]
-
-        # Faz o PROCV (Merge) dinâmico entre as tabelas
-        df_consolidado = pd.merge(
-            df_det_res, df_dat_res, on="ORDERKEY", how="inner"
-        )
-        return df_consolidado
+        except Exception:
+            # Fallback caso o arquivo enviado seja um CSV único unificado
+            conteudo.seek(0)
+            try:
+                df = pd.read_excel(conteudo)
+            except Exception:
+                conteudo.seek(0)
+                df = pd.read_csv(conteudo, sep=None, engine="python")
+            
+            df.columns = df.columns.str.strip()
+            
+            col_ordem = "ORDERKEY" if "ORDERKEY" in df.columns else df.columns[2]
+            col_sku = "SKU" if "SKU" in df.columns else df.columns[3]
+            col_qtd = "OPENQTY" if "OPENQTY" in df.columns else df.columns[10]
+            col_rota = "ROUTE" if "ROUTE" in df.columns else df.columns[11]
+            col_stop = "STOP" if "STOP" in df.columns else "STOP"
+            
+            df["Rota_Limpa"] = df[col_rota].apply(extrair_rota_limpa)
+            df["Pedido_Rota"] = df[col_stop].astype(str).str.replace(".0", "", regex=False) if col_stop in df.columns else "1"
+            
+            df_resumido = pd.DataFrame({
+                "ORDERKEY": df[col_ordem],
+                "SKU": df[col_sku],
+                "OPENQTY": df[col_qtd],
+                "Rota_Limpa": df["Rota_Limpa"],
+                "Pedido_Rota": df["Pedido_Rota"]
+            })
+            return df_resumido
 
     except Exception as e:
-        st.error(
-            f"Erro ao ler as abas 'Detail' e 'Data'. Verifique o arquivo no GitHub. Detalhes: {e}"
-        )
+        st.error(f"Erro ao processar os dados: {e}")
         return None
 
 
@@ -92,37 +112,26 @@ if df_base is not None:
     with col1:
         sku_busca = st.text_input("🔍 Digite o SKU:", placeholder="Ex: 10226403")
     with col2:
-        rota_busca = st.text_input(
-            "📍 Digite a Rota:", placeholder="Ex: BR0551285"
-        )
+        rota_busca = st.text_input("📍 Digite a Rota:", placeholder="Ex: BR0551285")
 
     # Executa o filtro dinâmico
     if sku_busca or rota_busca:
         df_filtrado = df_base.copy()
 
         if sku_busca:
-            df_filtrado = df_filtrado[
-                df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)
-            ]
+            df_filtrado = df_filtrado[df_filtrado["SKU"].astype(str).str.contains(sku_busca, case=False)]
         if rota_busca:
-            df_filtrado = df_filtrado[
-                df_filtrado["Rota_Limpa"]
-                .astype(str)
-                .str.contains(rota_busca, case=False)
-            ]
+            df_filtrado = df_filtrado[df_filtrado["Rota_Limpa"].astype(str).str.contains(rota_busca, case=False)]
 
         if not df_filtrado.empty:
-            # Monta a tabela final adicionando o número do pedido na rota
-            df_exibicao = pd.DataFrame(
-                {
-                    "Conferido ✔": [False] * len(df_filtrado),
-                    "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
-                    "Pedido na Rota": df_filtrado["Pedido_Rota"],
-                    "SKU": df_filtrado["SKU"],
-                    "Quantia Solicitada": df_filtrado["OPENQTY"],
-                    "Rota": df_filtrado["Rota_Limpa"],
-                }
-            )
+            df_exibicao = pd.DataFrame({
+                "Conferido ✔": [False] * len(df_filtrado),
+                "Ordem (OrderKey)": df_filtrado["ORDERKEY"],
+                "Pedido na Rota": df_filtrado["Pedido_Rota"],
+                "SKU": df_filtrado["SKU"],
+                "Quantia Solicitada": df_filtrado["OPENQTY"],
+                "Rota": df_filtrado["Rota_Limpa"],
+            })
 
             st.write(f"### 📋 {len(df_exibicao)} caixas encontradas:")
 
@@ -130,19 +139,11 @@ if df_base is not None:
                 df_exibicao,
                 hide_index=True,
                 use_container_width=True,
-                disabled=[
-                    "Ordem (OrderKey)",
-                    "Pedido na Rota",
-                    "SKU",
-                    "Quantia Solicitada",
-                    "Rota",
-                ],
+                disabled=["Ordem (OrderKey)", "Pedido na Rota", "SKU", "Quantia Solicitada", "Rota"],
             )
         else:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
-        st.info(
-            "💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias."
-        )
+        st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento e quantias.")
 else:
     st.info("Aguardando carregamento da base do GitHub...")
