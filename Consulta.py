@@ -2,6 +2,7 @@ import io
 import re
 import pandas as pd
 import streamlit as st
+import openpyxl
 
 # =========================================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -27,54 +28,54 @@ def extrair_rota_limpa(valor_rota):
     return texto
 
 
-def encontrar_e_limpar_aba(xls, nome_aba):
-    """Lê a aba, localiza a linha do cabeçalho real de forma nativa e limpa o DataFrame"""
-    # Lê a aba de forma totalmente bruta
-    df_bruto = pd.read_excel(xls, sheet_name=nome_aba, header=None)
+def descobrir_linha_cabecalho(caminho_arquivo, nome_aba):
+    """Abre o arquivo usando openpyxl nativo e retorna o índice correto do cabeçalho (0-indexed)"""
+    wb = openpyxl.load_workbook(caminho_arquivo, data_only=True, read_only=True)
+    if nome_aba not in wb.sheetnames:
+        return 0
+    
+    ws = wb[nome_aba]
+    # Varre as primeiras 15 linhas usando células nativas (sem passar pelo Pandas)
+    for idx_linha, linha in enumerate(ws.iter_rows(max_row=15, values_only=True)):
+        # Junta todas as células da linha numa única string minúscula
+        texto_linha = " ".join([str(celula).strip().lower() for celula in linha if celula is not None])
+        if "order number" in texto_linha or "orderkey" in texto_linha:
+            return idx_linha
+            
+    return 0
 
-    linha_cabecalho = 0
-    encontrou = False
 
-    # Varre as primeiras linhas usando estruturas nativas do Python para evitar erros de Series
-    for i in range(min(15, len(df_bruto))):
-        # Converte a linha inteira num array nativo, depois para string e junta tudo
-        valores_celulas = df_bruto.iloc[i].dropna().astype(str).tolist()
-        linha_completa_txt = " ".join(valores_celulas).lower()
-        
-        if "order number" in linha_completa_txt or "orderkey" in linha_completa_txt:
-            linha_cabecalho = i
-            encontrou = True
-            break
-
-    if encontrou:
-        # Recria o dataframe saltando as linhas inúteis do topo
-        df_limpo = pd.read_excel(xls, sheet_name=nome_aba, skiprows=linha_cabecalho)
-    else:
-        df_limpo = pd.read_excel(xls, sheet_name=nome_aba)
-
-    # Padroniza e limpa os nomes das colunas
-    df_limpo.columns = df_limpo.columns.astype(str).str.strip().str.upper()
-
-    # Normaliza variações para garantir que a chave vire ORDERKEY
+def carregar_e_limpar_aba(caminho_arquivo, nome_aba):
+    """Localiza a linha real do cabeçalho nativamente e carrega o DataFrame limpo"""
+    linha_header = descobrir_linha_cabecalho(caminho_arquivo, nome_aba)
+    
+    # Carrega definindo exatamente qual linha contém os títulos reais das colunas
+    df = pd.read_excel(caminho_arquivo, sheet_name=nome_aba, header=linha_header)
+    
+    # Padroniza nomes de colunas
+    df.columns = df.columns.astype(str).str.strip().str.upper()
+    
+    # Normaliza variações para garantir que vire 'ORDERKEY'
     renomear = {}
-    for col in df_limpo.columns:
+    for col in df.columns:
         if "ORDER" in col and "NUM" in col:
             renomear[col] = "ORDERKEY"
     if renomear:
-        df_limpo = df_limpo.rename(columns=renomear)
-
-    return df_limpo
+        df = df.rename(columns=renomear)
+        
+    return df
 
 
 @st.cache_data(ttl=60)
 def carregar_dados_local():
     try:
-        # Abre o Excel diretamente do repositório local
-        with pd.ExcelFile("Export.xlsx", engine="openpyxl") as xls:
-            df_detail = encontrar_e_limpar_aba(xls, "Detail")
-            df_data = encontrar_e_limpar_aba(xls, "Data")
+        arquivo_excel = "Export.xlsx"
+        
+        # Carrega as duas abas aplicando a limpeza nativa de cabeçalho superior
+        df_detail = carregar_e_limpar_aba(arquivo_excel, "Detail")
+        df_data = carregar_e_limpar_aba(arquivo_excel, "Data")
 
-        # Garante que a chave ORDERKEY seja String idêntica e limpa em ambas as abas
+        # Garante que a chave ORDERKEY seja String idêntica e sem decimais flutuantes
         if "ORDERKEY" in df_detail.columns:
             df_detail["ORDERKEY"] = (
                 df_detail["ORDERKEY"]
@@ -113,13 +114,13 @@ def carregar_dados_local():
         sku_lbl = col_sku[0] if col_sku else "SKU"
         qty_lbl = col_qty[0] if col_qty else "OPENQTY"
 
-        # Filtra apenas o necessário para a conferência final
+        # Filtra apenas o necessário para a tabela final de conferência
         df_det_res = df_detail[["ORDERKEY", sku_lbl, qty_lbl]].rename(
             columns={sku_lbl: "SKU", qty_lbl: "OPENQTY"}
         )
         df_dat_res = df_data[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # Faz o cruzamento trazendo os dados de transporte para o SKU correspondente
+        # Faz o cruzamento estruturado (PROCV via Left Join)
         df_consolidado = pd.merge(df_det_res, df_dat_res, on="ORDERKEY", how="left")
         return df_consolidado
 
@@ -133,7 +134,7 @@ def carregar_dados_local():
         return None
 
 
-# Botão de controle do cache lateral
+# Botão de controle de cache na barra lateral
 if st.sidebar.button("🔄 Forçar Limpeza de Cache"):
     st.cache_data.clear()
     st.rerun()
