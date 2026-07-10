@@ -133,7 +133,7 @@ def carregar_dados_local():
             df_data_cru = pd.read_excel(xls, sheet_name="Data", header=None)
 
         # ---------------------------------------------------------------------
-        # 1. PROCESSANDO A ABA "DETAIL" (FOCADO EM ÍNDICES DE COLUNA)
+        # 1. PROCESSANDO A ABA "DETAIL" (MAUPEAMENTO FIXO PELA COLUNA L)
         # ---------------------------------------------------------------------
         # Descobre onde começa o cabeçalho real
         linha_cab_det = 0
@@ -142,26 +142,22 @@ def carregar_dados_local():
                 linha_cab_det = i
                 break
         
-        # Coleta os dados puramente abaixo do cabeçalho
+        # Coleta os dados puramente abaixo da segunda linha do cabeçalho (Order Qty:)
         dados_detail = df_detail_cru.iloc[linha_cab_det + 1 :].copy()
         
-        # Identifica as colunas dinamicamente com base nos nomes da linha de cabeçalho
+        # Identifica o SKU por texto
         nomes_det = [str(x).strip().upper() for x in df_detail_cru.iloc[linha_cab_det].tolist()]
-        
-        idx_sku = next((i for i, col in enumerate(nomes_det) if "SKU" in col), 3) # Padrão coluna 3 se falhar
-        
-        # --- AJUSTE AQUI: Busca por ORIGINALQTY ou ORDER QTY ---
-        idx_qty = next(
-            (i for i, col in enumerate(nomes_det) if "ORIGINALQTY" in col or "ORDER QTY" in col or "QTY" in col), 
-            4
-        )
+        idx_sku = next((i for i, col in enumerate(nomes_det) if "SKU" in col), 3) 
+
+        # TRAVA FIXA: Coluna L é rigorosamente o índice 11 no Python (A=0, B=1, C=2... L=11)
+        idx_qty = 11 
 
         # Monta um dataframe limpo e isolado de Detail usando índices exatos
         df_detail_limpo = pd.DataFrame()
         df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2]) # Coluna C (índice 2)
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
         
-        # Conversão numérica robusta baseada na coluna correta encontrada
+        # Força conversão numérica pura e joga pra float para aceitar decimais (ex: 0.20000, 1.60000)
         df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors='coerce').fillna(0)
 
         # ---------------------------------------------------------------------
