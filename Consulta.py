@@ -14,40 +14,22 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* 1. Altera o fundo de toda a aplicação (Área principal) */
-    .stApp {
-        background-color: #0f172a !important; 
-    }
-    
-    /* 2. Altera o fundo da barra lateral (Sidebar) */
-    [data-testid="stSidebar"] {
-        background-color: #1e293b !important; 
-    }
-
-    /* 3. Ajusta a cor padrão de todos os textos informativos */
-    .stMarkdown, p, span, label, h3 {
-        color: #f1f5f9 !important; 
-    }
-
-    /* 4. Estilização do Banner Centralizado com Efeito 3D e Degradê Azul-Céu */
+    .stApp { background-color: #0f172a !important; }
+    [data-testid="stSidebar"] { background-color: #1e293b !important; }
+    .stMarkdown, p, span, label, h3 { color: #f1f5f9 !important; }
     .custom-header {
-        /* Degradê marcante que vai do azul-céu vivo ao azul escuro profundo */
         background: linear-gradient(135deg, #0284c7 0%, #0369a1 40%, #0f172a 100%);
         padding: 35px 20px;
         border-radius: 12px;
         text-align: center;
         margin-bottom: 30px;
-        
-        /* Combinação de sombras internas para criar o efeito 3D (relevo e luz no topo) */
         box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.4), 
                     inset 0 10px 20px rgba(255, 255, 255, 0.1),
                     inset 0 -5px 15px rgba(0, 0, 0, 0.3),
                     0 10px 25px rgba(0,0,0,0.5);
-                    
         border: 1px solid #0284c7;
         border-bottom: 5px solid #0369a1;
     }
-    
     .custom-title {
         color: #ffffff !important;
         font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -58,9 +40,8 @@ st.markdown(
         text-transform: uppercase;
         text-shadow: 0px 4px 8px rgba(0,0,0,0.5);
     }
-    
     .custom-subtitle {
-        color: #e0f2fe !important; /* Azul muito claro para harmonizar com o azul-céu */
+        color: #e0f2fe !important;
         font-size: 1.05rem;
         margin-top: 12px;
         margin-bottom: 0;
@@ -69,15 +50,11 @@ st.markdown(
         text-transform: uppercase;
         text-shadow: 0px 2px 4px rgba(0,0,0,0.3);
     }
-    
-    /* Customização dos inputs */
     div[data-baseweb="input"] {
         background-color: #1e293b !important;
         border-color: rgba(2, 132, 199, 0.4) !important;
     }
-    input {
-        color: #ffffff !important;
-    }
+    input { color: #ffffff !important; }
     </style>
     
     <div class="custom-header">
@@ -89,31 +66,18 @@ st.markdown(
 )
 
 def extrair_quatro_digitos_rota(valor_rota):
-    """
-    Extrai apenas os 4 números finais da rota (ex: BRGP-BR BR0551285_BRGP -> 1285)
-    """
     if pd.isna(valor_rota):
         return "N/A"
     texto = str(valor_rota).strip()
-    
-    # Procura por BR seguido de números e captura os 4 últimos antes do underline ou espaço
     match = re.search(r"BR\d{3}(\d{4})", texto, re.IGNORECASE)
     if match:
         return match.group(1)
-    
-    # Caso o padrão mude um pouco, tenta pegar qualquer sequência de 4 dígitos isolados
     match_fallback = re.search(r"(\d{4})", texto)
     if match_fallback:
         return match_fallback.group(1)
-        
     return texto
 
-
 def limpar_serie_texto(serie):
-    """
-    Força a conversão para string elemento por elemento, removendo espaços
-    e decimais residuais de forma totalmente segura contra erros de DataFrame.
-    """
     return (
         serie.astype(str)
         .str.strip()
@@ -121,43 +85,54 @@ def limpar_serie_texto(serie):
         .str.replace(r"\s+", "", regex=True)
     )
 
-
 @st.cache_data(ttl=60)
 def carregar_dados_local():
+    arquivo_excel = "Export.xlsx"
+    
     try:
-        arquivo_excel = "Export.xlsx"
-        
-        # Carrega as abas de forma 100% crua (sem processar cabeçalhos automáticos)
+        # TENTATIVA 1: Tenta ler o formato padrão moderno (.xlsx zipado real)
         with pd.ExcelFile(arquivo_excel, engine="openpyxl") as xls:
             df_detail_cru = pd.read_excel(xls, sheet_name="Detail", header=None)
             df_data_cru = pd.read_excel(xls, sheet_name="Data", header=None)
+    except Exception as e:
+        # TENTATIVA 2: Se der erro de ZIP, o arquivo é um HTML/XML antigo disfarçado
+        if "is not a zip file" in str(e).lower() or "bad zip file" in str(e).lower():
+            try:
+                # Força a leitura interpretando a estrutura de texto/HTML de tabelas
+                df_detail_cru = pd.read_html(arquivo_excel, match="Detail")[0]
+                df_data_cru = pd.read_html(arquivo_excel, match="Data")[0]
+            except Exception:
+                try:
+                    # Alternativa secundária usando o motor antigo xlrd
+                    df_detail_cru = pd.read_excel(arquivo_excel, sheet_name="Detail", header=None, engine="xlrd")
+                    df_data_cru = pd.read_excel(arquivo_excel, sheet_name="Data", header=None, engine="xlrd")
+                except Exception as e_final:
+                    st.error(f"O formato gerado pelo sistema hoje é incompatível. Erro interno: {e_final}")
+                    return None
+        else:
+            st.error(f"Erro ao abrir arquivo: {e}")
+            return None
 
+    try:
         # ---------------------------------------------------------------------
-        # 1. PROCESSANDO A ABA "DETAIL" (MAUPEAMENTO FIXO PELA COLUNA L)
+        # 1. PROCESSANDO A ABA "DETAIL" (MAPEAMENTO FIXO COLUNA L)
         # ---------------------------------------------------------------------
-        # Descobre onde começa o cabeçalho real
         linha_cab_det = 0
         for i in range(min(15, len(df_detail_cru))):
             if df_detail_cru.shape[1] > 2 and "order" in str(df_detail_cru.iloc[i, 2]).strip().lower():
                 linha_cab_det = i
                 break
         
-        # Coleta os dados puramente abaixo da segunda linha do cabeçalho (Order Qty:)
         dados_detail = df_detail_cru.iloc[linha_cab_det + 1 :].copy()
-        
-        # Identifica o SKU por texto
         nomes_det = [str(x).strip().upper() for x in df_detail_cru.iloc[linha_cab_det].tolist()]
         idx_sku = next((i for i, col in enumerate(nomes_det) if "SKU" in col), 3) 
 
-        # TRAVA FIXA: Coluna L é rigorosamente o índice 11 no Python (A=0, B=1, C=2... L=11)
+        # Coluna L fixa (Índice 11)
         idx_qty = 11 
 
-        # Monta um dataframe limpo e isolado de Detail usando índices exatos
         df_detail_limpo = pd.DataFrame()
-        df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2]) # Coluna C (índice 2)
+        df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2])
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
-        
-        # Força conversão numérica pura e joga pra float para aceitar decimais (ex: 0.20000, 1.60000)
         df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors='coerce').fillna(0)
 
         # ---------------------------------------------------------------------
@@ -171,29 +146,22 @@ def carregar_dados_local():
                 
         dados_data = df_data_cru.iloc[linha_cab_dat + 1 :].copy()
         
-        # Mapeamento cirúrgico de Data:
         df_data_limpo = pd.DataFrame()
-        df_data_limpo["ORDERKEY"] = limpar_serie_texto(dados_data.iloc[:, 2])   # Coluna C (índice 2)
-        df_data_limpo["ROTA_RAW"] = dados_data.iloc[:, 206]                     # Coluna GY (índice 206)
-        df_data_limpo["PEDIDO_ROTA"] = dados_data.iloc[:, 207].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) # Coluna GZ (índice 207)
+        df_data_limpo["ORDERKEY"] = limpar_serie_texto(dados_data.iloc[:, 2])
+        df_data_limpo["ROTA_RAW"] = dados_data.iloc[:, 206]
+        df_data_limpo["PEDIDO_ROTA"] = dados_data.iloc[:, 207].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
         
-        # Aplica a extração dos 4 dígitos na rota gerada
         df_data_limpo["ROTA_LIMPA"] = df_data_limpo["ROTA_RAW"].apply(extrair_quatro_digitos_rota)
-        
-        # Filtra apenas o necessário para o PROCV
         df_data_final = df_data_limpo[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
         # ---------------------------------------------------------------------
-        # 3. MERGE (PROCV) GARANTIDO ENTRE STRINGS LIMPAS
+        # 3. MERGE (PROCV)
         # ---------------------------------------------------------------------
         df_consolidado = pd.merge(df_detail_limpo, df_data_final, on="ORDERKEY", how="left")
         return df_consolidado
 
-    except FileNotFoundError:
-        st.error("Erro: O arquivo 'Export.xlsx' não foi encontrado na pasta do projeto.")
-        return None
-    except Exception as e:
-        st.error(f"Erro ao processar o arquivo: {e}")
+    except Exception as e_proc:
+        st.error(f"Erro ao processar as colunas do arquivo de hoje: {e_proc}")
         return None
 
 
