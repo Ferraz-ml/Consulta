@@ -155,7 +155,9 @@ def carregar_dados_local():
         df_detail_limpo = pd.DataFrame()
         df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2]) # Coluna C (índice 2)
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
-        df_detail_limpo["OPENQTY"] = dados_detail.iloc[:, idx_qty].astype(str).str.strip()
+        
+        # --- ALTERAÇÃO AQUI: Conversão numérica robusta que evita o 0.00000 ---
+        df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors='coerce').fillna(0)
 
         # ---------------------------------------------------------------------
         # 2. PROCESSANDO A ABA "DATA" (USANDO ÍNDICES BIUNÍVOCOS C, GY, GZ)
