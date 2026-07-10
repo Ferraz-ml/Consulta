@@ -149,14 +149,19 @@ def carregar_dados_local():
         nomes_det = [str(x).strip().upper() for x in df_detail_cru.iloc[linha_cab_det].tolist()]
         
         idx_sku = next((i for i, col in enumerate(nomes_det) if "SKU" in col), 3) # Padrão coluna 3 se falhar
-        idx_qty = next((i for i, col in enumerate(nomes_det) if "QTY" in col or "QUANT" in col), 4)
+        
+        # --- AJUSTE AQUI: Busca por ORIGINALQTY ou ORDER QTY ---
+        idx_qty = next(
+            (i for i, col in enumerate(nomes_det) if "ORIGINALQTY" in col or "ORDER QTY" in col or "QTY" in col), 
+            4
+        )
 
         # Monta um dataframe limpo e isolado de Detail usando índices exatos
         df_detail_limpo = pd.DataFrame()
         df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2]) # Coluna C (índice 2)
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
         
-        # --- ALTERAÇÃO AQUI: Conversão numérica robusta que evita o 0.00000 ---
+        # Conversão numérica robusta baseada na coluna correta encontrada
         df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors='coerce').fillna(0)
 
         # ---------------------------------------------------------------------
