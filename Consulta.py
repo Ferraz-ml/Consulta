@@ -1,5 +1,4 @@
 import io
-import os
 import re
 import pandas as pd
 import streamlit as st
@@ -8,7 +7,9 @@ import streamlit as st
 # CONFIGURAÇÃO DA PÁGINA
 # =========================================================================
 st.set_page_config(
-    page_title="Consulta de Cargas", page_icon="📦", layout="wide"
+    page_title="Consulta de Cargas", 
+    page_icon="📦", 
+    layout="wide"
 )
 
 # INJEÇÃO DE DESIGN 100% AZUL ESCURO COM BANNER 3D AZUL-CÉU
@@ -87,9 +88,8 @@ def limpar_serie_texto(serie):
     )
 
 def processar_dataframes(df_detail_cru, df_data_cru):
-    """Executa o processamento, limpeza e PROCV das abas carregadas"""
     try:
-        # 1. PROCESSANDO A ABA "DETAIL" (MAPEAMENTO FIXO COLUNA L)
+        # 1. PROCESSANDO A ABA "DETAIL" (Mapeamento na Coluna L fixa)
         linha_cab_det = 0
         for i in range(min(15, len(df_detail_cru))):
             if df_detail_cru.shape[1] > 2 and "order" in str(df_detail_cru.iloc[i, 2]).strip().lower():
@@ -106,9 +106,9 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         df_detail_limpo = pd.DataFrame()
         df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2])
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
-        df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors='coerce').fillna(0)
+        df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors="coerce").fillna(0)
 
-        # 2. PROCESSANDO A ABA "DATA" (USANDO ÍNDICES BIUNÍVOCOS C, GY, GZ)
+        # 2. PROCESSANDO A ABA "DATA" (Usando índices de coluna fixas)
         linha_cab_dat = 0
         for i in range(min(15, len(df_data_cru))):
             if df_data_cru.shape[1] > 2 and "order" in str(df_data_cru.iloc[i, 2]).strip().lower():
@@ -133,24 +133,23 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         return None
 
 def ler_arquivo_excel(caminho_ou_buffer):
-    """Tenta ler de forma robusta um arquivo Excel vindo do disco ou do Uploader"""
     try:
-        # Tentativa 1: Excel convencional (.xlsx)
+        # Tentativa 1: Excel padrão .xlsx
         with pd.ExcelFile(caminho_ou_buffer, engine="openpyxl") as xls:
             df_detail = pd.read_excel(xls, sheet_name="Detail", header=None)
             df_data = pd.read_excel(xls, sheet_name="Data", header=None)
             return df_detail, df_data
     except Exception as e1:
         erro_str = str(e1).lower()
-        # Se for XML/HTML disfarçado, tenta ler tabelas HTML
         if "zip" in erro_str or "unsupported" in erro_str or "format" in erro_str or "bad" in erro_str:
             try:
+                # Tentativa 2: HTML/XML disfarçado
                 df_detail = pd.read_html(caminho_ou_buffer, match="Detail")[0]
                 df_data = pd.read_html(caminho_ou_buffer, match="Data")[0]
                 return df_detail, df_data
             except Exception:
                 try:
-                    # Tentativa 3: Excel XLS antigo
+                    # Tentativa 3: XLS antigo
                     df_detail = pd.read_excel(caminho_ou_buffer, sheet_name="Detail", header=None, engine="xlrd")
                     df_data = pd.read_excel(caminho_ou_buffer, sheet_name="Data", header=None, engine="xlrd")
                     return df_detail, df_data
@@ -158,49 +157,33 @@ def ler_arquivo_excel(caminho_ou_buffer):
                     pass
     return None, None
 
-# Botão para forçar a atualização e limpar o cache do Streamlit
-if st.sidebar.button("🔄 Forçar Limpeza de Cache & Recarregar"):
-    st.cache_data.clear()
-    st.rerun()
-
-# --- CARREGAMENTO DOS DADOS (SEM CACHE LOCAL ATIVO NO ARQUIVO FÍSICO) ---
+# --- CARREGAMENTO INTEGRALMENTE MANUAL ---
 df_base = None
-arquivo_local = "Export.xlsx"
 
-# Opção de Upload Manual na barra lateral (Sempre visível e com prioridade)
-st.sidebar.markdown("### 📂 Upload Manual")
-arquivo_enviado = st.sidebar.file_uploader(
-    "Caso o arquivo local não atualize automaticamente, arraste-o aqui:", 
+st.markdown("### 📂 Envie seu Relatório de Carga")
+arquivo_enviado = st.file_uploader(
+    "Arraste o arquivo exportado do ERP aqui (.xlsx ou .xls):", 
     type=["xlsx", "xls"]
 )
 
-# Fluxo de Decisão: Prioriza o arquivo enviado manualmente pelo usuário
 if arquivo_enviado is not None:
+    # Mostra o tamanho real do arquivo que você acabou de subir para provar que o upload deu certo!
+    tamanho_kb = len(arquivo_enviado.getvalue()) / 1024
+    st.info(f"📁 Arquivo recebido com sucesso! Tamanho carregado na memória: {tamanho_kb:.2f} KB")
+    
     df_det, df_dat = ler_arquivo_excel(arquivo_enviado)
     if df_det is not None and df_dat is not None:
         df_base = processar_dataframes(df_det, df_dat)
         if df_base is not None:
-            st.sidebar.success("✅ Arquivo carregado manualmente!")
+            st.success("✅ Banco de dados processado com sucesso!")
     else:
-        st.sidebar.error("❌ Não foi possível ler as abas 'Detail' e 'Data' do arquivo enviado.")
+        st.error("❌ O arquivo enviado não pôde ser lido. Certifique-se de que ele possui as abas 'Detail' e 'Data'.")
+else:
+    st.warning("⚠️ Aguardando você arrastar o arquivo de cargas no campo acima para iniciar.")
 
-# Se não houver arquivo manual, tenta ler o físico local "Export.xlsx"
-if df_base is None:
-    if os.path.exists(arquivo_local):
-        tamanho_bytes = os.path.getsize(arquivo_local)
-        if tamanho_bytes >= 100:
-            df_det, df_dat = ler_arquivo_excel(arquivo_local)
-            if df_det is not None and df_dat is not None:
-                df_base = processar_dataframes(df_det, df_dat)
-            else:
-                st.error("🚨 Erro na decodificação do arquivo físico local `Export.xlsx`. Verifique se ele não está bloqueado por outro programa.")
-        else:
-            st.error(f"⚠️ O arquivo físico `Export.xlsx` existe, mas possui apenas {tamanho_bytes} bytes (vazio).")
-    else:
-        st.warning("ℹ️ Nenhum arquivo `Export.xlsx` encontrado na pasta local. Por favor, envie-o pela barra lateral.")
-
-# --- INTERFACE DE BUSCA (Só é exibida se os dados foram lidos com sucesso) ---
+# --- INTERFACE DE BUSCA ---
 if df_base is not None:
+    st.write("---")
     col1, col2 = st.columns(2)
     with col1:
         sku_busca = st.text_input("🔍 Digite o SKU:", placeholder="Ex: 10226403")
@@ -249,5 +232,3 @@ if df_base is not None:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
         st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento.")
-else:
-    st.info("Aguardando carregamento de uma base de dados válida...")
