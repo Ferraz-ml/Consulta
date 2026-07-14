@@ -89,29 +89,46 @@ def limpar_serie_texto(serie):
 def carregar_dados_local():
     arquivo_excel = "Export.xlsx"
     
+    df_detail_cru = None
+    df_data_cru = None
+    
     try:
-        # TENTATIVA 1: Tenta ler o formato padrão moderno (.xlsx zipado real)
+        # TENTATIVA 1: Tenta ler o formato padrão moderno (.xlsx)
         with pd.ExcelFile(arquivo_excel, engine="openpyxl") as xls:
             df_detail_cru = pd.read_excel(xls, sheet_name="Detail", header=None)
             df_data_cru = pd.read_excel(xls, sheet_name="Data", header=None)
     except Exception as e:
-        # TENTATIVA 2: Se der erro de ZIP, o arquivo é um HTML/XML antigo disfarçado
-        if "is not a zip file" in str(e).lower() or "bad zip file" in str(e).lower():
+        erro_str = str(e).lower()
+        
+        # TENTATIVA 2: Se for um ZIP inválido ou formato não suportado, pode ser HTML ou XML
+        if "zip" in erro_str or "unsupported" in erro_str or "format" in erro_str or "bad" in erro_str:
             try:
-                # Força a leitura interpretando a estrutura de texto/HTML de tabelas
+                # Força a leitura interpretando a estrutura de tabelas HTML (comum em exports de ERPs)
                 df_detail_cru = pd.read_html(arquivo_excel, match="Detail")[0]
                 df_data_cru = pd.read_html(arquivo_excel, match="Data")[0]
             except Exception:
                 try:
-                    # Alternativa secundária usando o motor antigo xlrd
+                    # TENTATIVA 3: Tenta o motor antigo xlrd (arquivos .xls reais de 97-2003)
                     df_detail_cru = pd.read_excel(arquivo_excel, sheet_name="Detail", header=None, engine="xlrd")
                     df_data_cru = pd.read_excel(arquivo_excel, sheet_name="Data", header=None, engine="xlrd")
-                except Exception as e_final:
-                    st.error(f"O formato gerado pelo sistema hoje é incompatível. Erro interno: {e_final}")
-                    return None
+                except Exception:
+                    try:
+                        # TENTATIVA 4: E se for apenas um arquivo CSV disfarçado com tabulação ou vírgula?
+                        df_completo = pd.read_csv(arquivo_excel, sep=None, engine="python", header=None)
+                        df_detail_cru = df_completo
+                        df_data_cru = df_completo
+                        st.warning("⚠️ O arquivo foi detectado como CSV/Texto. O mapeamento de abas 'Detail'/'Data' pode não funcionar como esperado.")
+                    except Exception as e_final:
+                        st.error(f"Não foi possível decodificar o arquivo. Formato totalmente incompatível. Erro interno: {e_final}")
+                        return None
         else:
             st.error(f"Erro ao abrir arquivo: {e}")
             return None
+
+    # Validação de segurança se os dataframes foram carregados de forma bem-sucedida
+    if df_detail_cru is None or df_data_cru is None:
+        st.error("Falha crítica: Os dados de origem não puderam ser carregados em memória.")
+        return None
 
     try:
         # ---------------------------------------------------------------------
