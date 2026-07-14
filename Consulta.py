@@ -1,6 +1,5 @@
 import io
 import re
-import requests
 import pandas as pd
 import streamlit as st
 
@@ -158,39 +157,29 @@ def ler_arquivo_excel(caminho_ou_buffer):
                     pass
     return None, None
 
-# --- CARREGAMENTO DO GITHUB ---
-# ADICIONE SEU LINK DO GITHUB NO LUGAR DO LINK ABAIXO:
-URL_GITHUB = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main/Export.xlsx"
-
+# --- CARREGAMENTO INTEGRALMENTE MANUAL ---
 df_base = None
 
-try:
-    # Busca o arquivo de forma silenciosa na internet
-    resposta = requests.get(URL_GITHUB, timeout=15)
-    if resposta.status_code == 200:
-        conteudo_bytes = resposta.content
-        tamanho_kb = len(conteudo_bytes) / 1024
-        
-        # Só processa se o arquivo do GitHub tiver um tamanho aceitável (> 1KB)
-        if tamanho_kb > 1:
-            buffer = io.BytesIO(conteudo_bytes)
-            df_det, df_dat = ler_arquivo_excel(buffer)
-            if df_det is not None and df_dat is not None:
-                df_base = processar_dataframes(df_det, df_dat)
-                st.success(f"⚡ Base de dados carregada em tempo real da nuvem! ({tamanho_kb:.1f} KB)")
-            else:
-                st.error("🚨 Erro de decodificação no arquivo do GitHub.")
-        else:
-            st.error(f"⚠️ O arquivo encontrado no GitHub está muito pequeno ({tamanho_kb:.2f} KB). Certifique-se de que não subiu o arquivo vazio.")
-    else:
-        st.error(f"❌ Não foi possível acessar o arquivo no GitHub. Código de resposta HTTP: {resposta.status_code}")
-except Exception as e_con:
-    st.error(f"🔌 Falha de rede ao conectar com o GitHub: {e_con}")
+st.markdown("### 📂 Envie seu Relatório de Carga")
+arquivo_enviado = st.file_uploader(
+    "Arraste o arquivo exportado do ERP aqui (.xlsx ou .xls):", 
+    type=["xlsx", "xls"]
+)
 
-# Botão de atualização rápida para os operadores
-if st.sidebar.button("🔄 Recarregar Dados da Nuvem"):
-    st.cache_data.clear()
-    st.rerun()
+if arquivo_enviado is not None:
+    # Mostra o tamanho real do arquivo que você acabou de subir para provar que o upload deu certo!
+    tamanho_kb = len(arquivo_enviado.getvalue()) / 1024
+    st.info(f"📁 Arquivo recebido com sucesso! Tamanho carregado na memória: {tamanho_kb:.2f} KB")
+    
+    df_det, df_dat = ler_arquivo_excel(arquivo_enviado)
+    if df_det is not None and df_dat is not None:
+        df_base = processar_dataframes(df_det, df_dat)
+        if df_base is not None:
+            st.success("✅ Banco de dados processado com sucesso!")
+    else:
+        st.error("❌ O arquivo enviado não pôde ser lido. Certifique-se de que ele possui as abas 'Detail' e 'Data'.")
+else:
+    st.warning("⚠️ Aguardando você arrastar o arquivo de cargas no campo acima para iniciar.")
 
 # --- INTERFACE DE BUSCA ---
 if df_base is not None:
@@ -243,5 +232,3 @@ if df_base is not None:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
         st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento.")
-else:
-    st.warning("Aguardando carregamento de uma base de dados válida do GitHub...")
