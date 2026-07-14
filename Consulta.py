@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import pandas as pd
 import streamlit as st
@@ -89,6 +90,24 @@ def limpar_serie_texto(serie):
 def carregar_dados_local():
     arquivo_excel = "Export.xlsx"
     
+    # 1. VALIDAÇÃO DE EXISTÊNCIA E TAMANHO DO ARQUIVO
+    if not os.path.exists(arquivo_excel):
+        st.error(f"❌ O arquivo '{arquivo_excel}' não foi encontrado no diretório do sistema.")
+        return None
+        
+    tamanho_bytes = os.path.getsize(arquivo_excel)
+    if tamanho_bytes == 0:
+        st.error(f"❌ O arquivo '{arquivo_excel}' foi encontrado, mas está totalmente VAZIO (0 bytes).")
+        return None
+
+    # Tentar ler o cabeçalho binário para ajudar no diagnóstico
+    amostra_header = b""
+    try:
+        with open(arquivo_excel, "rb") as f:
+            amostra_header = f.read(100)
+    except Exception:
+        pass
+
     df_detail_cru = None
     df_data_cru = None
     
@@ -113,13 +132,32 @@ def carregar_dados_local():
                     df_data_cru = pd.read_excel(arquivo_excel, sheet_name="Data", header=None, engine="xlrd")
                 except Exception:
                     try:
-                        # TENTATIVA 4: E se for apenas um arquivo CSV disfarçado com tabulação ou vírgula?
+                        # TENTATIVA 4: E se for apenas um arquivo CSV disfarçado?
                         df_completo = pd.read_csv(arquivo_excel, sep=None, engine="python", header=None)
                         df_detail_cru = df_completo
                         df_data_cru = df_completo
                         st.warning("⚠️ O arquivo foi detectado como CSV/Texto. O mapeamento de abas 'Detail'/'Data' pode não funcionar como esperado.")
                     except Exception as e_final:
-                        st.error(f"Não foi possível decodificar o arquivo. Formato totalmente incompatível. Erro interno: {e_final}")
+                        # Se todas as alternativas falharem, mostramos um painel de diagnóstico avançado
+                        st.error("🚨 Não foi possível decodificar o arquivo.")
+                        
+                        with st.expander("🛠️ Ver Diagnóstico Técnico do Arquivo"):
+                            st.write(f"**Tamanho do arquivo:** {tamanho_bytes} bytes (~{round(tamanho_bytes/1024, 2)} KB)")
+                            st.write("**Dados iniciais do arquivo (Raw hex):**")
+                            st.code(amostra_header)
+                            try:
+                                texto_decodificado = amostra_header.decode('utf-8', errors='ignore')
+                                st.write("**Como texto plano:**")
+                                st.code(texto_decodificado)
+                            except Exception:
+                                pass
+                            st.info(
+                                "💡 **Como resolver:**\n"
+                                "1. Abra o seu arquivo `Export.xlsx` manualmente no Microsoft Excel no seu computador.\n"
+                                "2. Vá em **Arquivo > Salvar Como**.\n"
+                                "3. Mude o tipo para **Pasta de Trabalho do Excel (*.xlsx)**.\n"
+                                "4. Substitua o `Export.xlsx` antigo por esta nova versão salva e atualize o sistema."
+                            )
                         return None
         else:
             st.error(f"Erro ao abrir arquivo: {e}")
