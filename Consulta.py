@@ -1,6 +1,6 @@
 import io
-import os
 import re
+import requests
 import pandas as pd
 import streamlit as st
 
@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# INJEÇÃO DE DESIGN 100% AZUL ESCURO
+# INJEÇÃO DE DESIGN 100% AZUL ESCURO COM BANNER 3D AZUL-CÉU
 st.markdown(
     """
     <style>
@@ -36,7 +36,7 @@ st.markdown(
     .custom-title {
         color: #ffffff !important;
         font-family: 'Helvetica Neue', Arial, sans-serif;
-        font-size: 2.8rem;
+        font-size: 3.2rem;
         font-weight: 800;
         letter-spacing: 4px;
         margin: 0;
@@ -61,8 +61,8 @@ st.markdown(
     </style>
     
     <div class="custom-header">
-        <h1 class="custom-title">📦 CONSULTA DE CARGAS</h1>
-        <p class="custom-subtitle">Validação de Rotas Multi-Dispositivo</p>
+        <h1 class="custom-title">📦 CONSULTA</h1>
+        <p class="custom-subtitle">Controle de Fluxo Last-Mile & Validação de Rotas</p>
     </div>
     """,
     unsafe_allow_html=True
@@ -90,7 +90,7 @@ def limpar_serie_texto(serie):
 
 def processar_dataframes(df_detail_cru, df_data_cru):
     try:
-        # 1. PROCESSANDO A ABA "DETAIL" (Coluna L fixa)
+        # 1. PROCESSANDO A ABA "DETAIL" (Mapeamento na Coluna L fixa)
         linha_cab_det = 0
         for i in range(min(15, len(df_detail_cru))):
             if df_detail_cru.shape[1] > 2 and "order" in str(df_detail_cru.iloc[i, 2]).strip().lower():
@@ -101,14 +101,15 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         nomes_det = [str(x).strip().upper() for x in df_detail_cru.iloc[linha_cab_det].tolist()]
         idx_sku = next((i for i, col in enumerate(nomes_det) if "SKU" in col), 3) 
 
-        idx_qty = 11  # Coluna L fixa
+        # Coluna L fixa (Índice 11)
+        idx_qty = 11 
 
         df_detail_limpo = pd.DataFrame()
         df_detail_limpo["ORDERKEY"] = limpar_serie_texto(dados_detail.iloc[:, 2])
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
         df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors="coerce").fillna(0)
 
-        # 2. PROCESSANDO A ABA "DATA" (Índices fixos)
+        # 2. PROCESSANDO A ABA "DATA" (Usando índices de coluna fixas)
         linha_cab_dat = 0
         for i in range(min(15, len(df_data_cru))):
             if df_data_cru.shape[1] > 2 and "order" in str(df_data_cru.iloc[i, 2]).strip().lower():
@@ -134,6 +135,7 @@ def processar_dataframes(df_detail_cru, df_data_cru):
 
 def ler_arquivo_excel(caminho_ou_buffer):
     try:
+        # Tentativa 1: Excel padrão .xlsx
         with pd.ExcelFile(caminho_ou_buffer, engine="openpyxl") as xls:
             df_detail = pd.read_excel(xls, sheet_name="Detail", header=None)
             df_data = pd.read_excel(xls, sheet_name="Data", header=None)
@@ -142,11 +144,13 @@ def ler_arquivo_excel(caminho_ou_buffer):
         erro_str = str(e1).lower()
         if "zip" in erro_str or "unsupported" in erro_str or "format" in erro_str or "bad" in erro_str:
             try:
+                # Tentativa 2: HTML/XML disfarçado
                 df_detail = pd.read_html(caminho_ou_buffer, match="Detail")[0]
                 df_data = pd.read_html(caminho_ou_buffer, match="Data")[0]
                 return df_detail, df_data
             except Exception:
                 try:
+                    # Tentativa 3: XLS antigo
                     df_detail = pd.read_excel(caminho_ou_buffer, sheet_name="Detail", header=None, engine="xlrd")
                     df_data = pd.read_excel(caminho_ou_buffer, sheet_name="Data", header=None, engine="xlrd")
                     return df_detail, df_data
@@ -154,29 +158,39 @@ def ler_arquivo_excel(caminho_ou_buffer):
                     pass
     return None, None
 
-# --- ESTRUTURA DE LEITURA MULTI-DISPOSITIVO ---
+# --- CARREGAMENTO DO GITHUB ---
+# ADICIONE SEU LINK DO GITHUB NO LUGAR DO LINK ABAIXO:
+URL_GITHUB = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main/Export.xlsx"
+
 df_base = None
-arquivo_local = "Export.xlsx"
 
-# Se o arquivo existir no servidor onde o Streamlit está rodando, carrega automaticamente para todos!
-if os.path.exists(arquivo_local) and os.path.getsize(arquivo_local) >= 100:
-    df_det, df_dat = ler_arquivo_excel(arquivo_local)
-    if df_det is not None and df_dat is not None:
-        df_base = processar_dataframes(df_det, df_dat)
+try:
+    # Busca o arquivo de forma silenciosa na internet
+    resposta = requests.get(URL_GITHUB, timeout=15)
+    if resposta.status_code == 200:
+        conteudo_bytes = resposta.content
+        tamanho_kb = len(conteudo_bytes) / 1024
+        
+        # Só processa se o arquivo do GitHub tiver um tamanho aceitável (> 1KB)
+        if tamanho_kb > 1:
+            buffer = io.BytesIO(conteudo_bytes)
+            df_det, df_dat = ler_arquivo_excel(buffer)
+            if df_det is not None and df_dat is not None:
+                df_base = processar_dataframes(df_det, df_dat)
+                st.success(f"⚡ Base de dados carregada em tempo real da nuvem! ({tamanho_kb:.1f} KB)")
+            else:
+                st.error("🚨 Erro de decodificação no arquivo do GitHub.")
+        else:
+            st.error(f"⚠️ O arquivo encontrado no GitHub está muito pequeno ({tamanho_kb:.2f} KB). Certifique-se de que não subiu o arquivo vazio.")
+    else:
+        st.error(f"❌ Não foi possível acessar o arquivo no GitHub. Código de resposta HTTP: {resposta.status_code}")
+except Exception as e_con:
+    st.error(f"🔌 Falha de rede ao conectar com o GitHub: {e_con}")
 
-# Se não houver arquivo no servidor, cada usuário faz o upload de onde estiver (Celular, Tablet ou PC)
-if df_base is None:
-    st.info("👋 Para iniciar a consulta neste dispositivo, carregue a planilha de cargas abaixo:")
-    arquivo_enviado = st.file_uploader(
-        "Selecione o arquivo Excel exportado (.xlsx ou .xls):", 
-        type=["xlsx", "xls"]
-    )
-    if arquivo_enviado is not None:
-        df_det, df_dat = ler_arquivo_excel(arquivo_enviado)
-        if df_det is not None and df_dat is not None:
-            df_base = processar_dataframes(df_det, df_dat)
-            if df_base is not None:
-                st.success("✅ Conectado com sucesso!")
+# Botão de atualização rápida para os operadores
+if st.sidebar.button("🔄 Recarregar Dados da Nuvem"):
+    st.cache_data.clear()
+    st.rerun()
 
 # --- INTERFACE DE BUSCA ---
 if df_base is not None:
@@ -229,3 +243,5 @@ if df_base is not None:
             st.warning("Nenhum registro encontrado para os filtros aplicados.")
     else:
         st.info("💡 Digite um SKU ou Rota acima para listar as ordens de carregamento.")
+else:
+    st.warning("Aguardando carregamento de uma base de dados válida do GitHub...")
