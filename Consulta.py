@@ -128,7 +128,7 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         df_consolidado = pd.merge(df_detail_limpo, df_data_final, on="ORDERKEY", how="left")
         return df_consolidado
     except Exception as e:
-        st.error(f"Erro ao processar as colunas do arquivo: {e}")
+        st.error(f"Erro ao processar e cruzar as colunas do arquivo: {e}")
         return None
 
 def ler_arquivo_excel(caminho_ou_buffer):
@@ -144,50 +144,48 @@ def ler_arquivo_excel(caminho_ou_buffer):
                 df_detail = pd.read_html(caminho_ou_buffer, match="Detail")[0]
                 df_data = pd.read_html(caminho_ou_buffer, match="Data")[0]
                 return df_detail, df_data
-            except Exception:
+            except Exception as e2:
                 try:
                     df_detail = pd.read_excel(caminho_ou_buffer, sheet_name="Detail", header=None, engine="xlrd")
                     df_data = pd.read_excel(caminho_ou_buffer, sheet_name="Data", header=None, engine="xlrd")
                     return df_detail, df_data
-                except Exception:
-                    pass
+                except Exception as e3:
+                    st.error(f"Falha em todas as tentativas de leitura do Excel. Erros detalhados:\n\n1. {e1}\n\n2. {e2}\n\n3. {e3}")
+        else:
+            st.error(f"Erro ao abrir o arquivo: {e1}")
     return None, None
 
 
 # =========================================================================
-# PROCESSAMENTO AUTOMÁTICO COM DIAGNÓSTICO DE CAMINHO
+# PROCESSAMENTO AUTOMÁTICO COM ALERTA VISÍVEL
 # =========================================================================
 df_base = None
-
-# 1. Descobrir onde o script está rodando de verdade
 diretorio_atual = os.getcwd()
 
+# Verificação se o arquivo existe na pasta física
 if os.path.exists(ARQUIVO_PADRAO):
-    with st.spinner('Sincronizando dados...'):
+    with st.spinner('Lendo arquivo de cargas automático...'):
         df_det, df_dat = ler_arquivo_excel(ARQUIVO_PADRAO)
+        
         if df_det is not None and df_dat is not None:
             df_base = processar_dataframes(df_det, df_dat)
             if df_base is not None:
-                st.success("✅ Sistema pronto e atualizado!")
+                st.success("✅ Banco de dados sincronizado automaticamente com sucesso!")
+        else:
+            st.error(f"❌ O arquivo '{ARQUIVO_PADRAO}' existe, mas suas abas 'Detail' ou 'Data' não puderam ser lidas.")
 else:
-    # Mostra o diagnóstico amigável na tela se falhar
-    st.error(f"❌ O arquivo '{ARQUIVO_PADRAO}' não foi encontrado.")
+    # Se o arquivo não existir fisicamente, mostra o erro e ensina onde colocar
+    st.error(f"❌ O arquivo de carga automático '{ARQUIVO_PADRAO}' não foi localizado.")
+    st.markdown("### 🔍 Diagnóstico de Pastas")
+    st.info(f"O script está rodando em: `{diretorio_atual}`\n\nCertifique-se de que o arquivo Excel com o nome exato **`{ARQUIVO_PADRAO}`** esteja dentro dessa pasta!")
     
-    st.markdown("### 🔍 Painel de Diagnóstico (Ajuda)")
-    st.warning(f"O Python está procurando o arquivo na pasta: \n`{diretorio_atual}`")
-    
-    # Listar os arquivos para ver se ele está lá com outro nome
-    arquivos_na_pasta = os.listdir(diretorio_atual)
-    arquivos_excel = [f for f in arquivos_na_pasta if f.endswith(('.xlsx', '.xls'))]
-    
-    if arquivos_excel:
-        st.info(f"Encontrei estes arquivos Excel na pasta atual. Algum deles é o seu? \n{arquivos_excel}")
-        st.write("👉 Se o seu arquivo estiver ali na lista, mude o nome dele para **`carga_atual.xlsx`** ou altere o nome no início do código!")
-    else:
-        st.info("Não encontrei nenhum arquivo Excel (.xlsx ou .xls) nessa pasta. Certifique-se de salvar seu relatório de carga exatamente na pasta listada acima!")
+    # Listar arquivos para facilitar a sua vida
+    arquivos = [f for f in os.listdir(diretorio_atual) if f.endswith(('.xlsx', '.xls'))]
+    if arquivos:
+        st.warning(f"Arquivos Excel encontrados nessa pasta: {arquivos}. Mude o nome de um deles para **`carga_atual.xlsx`**!")
 
 # =========================================================================
-# INTERFACE DE BUSCA
+# INTERFACE DE BUSCA (Só aparece se o processamento deu certo)
 # =========================================================================
 if df_base is not None:
     st.write("---")
