@@ -68,8 +68,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# --- DEFINIÇÃO DO ARQUIVO PADRÃO DO BANCO DE DADOS ---
-# O arquivo excel que você quer que carregue de forma fixa
+# --- NOME DO ARQUIVO FIXO NO GITHUB/SERVIDOR ---
+# O arquivo excel precisa ter EXATAMENTE este nome e estar na mesma pasta do app.py
 ARQUIVO_PADRAO = "carga_atual.xlsx" 
 
 def extrair_quatro_digitos_rota(valor_rota):
@@ -94,7 +94,6 @@ def limpar_serie_texto(serie):
 
 def processar_dataframes(df_detail_cru, df_data_cru):
     try:
-        # 1. PROCESSANDO A ABA "DETAIL" (Mapeamento na Coluna L fixa)
         linha_cab_det = 0
         for i in range(min(15, len(df_detail_cru))):
             if df_detail_cru.shape[1] > 2 and "order" in str(df_detail_cru.iloc[i, 2]).strip().lower():
@@ -104,8 +103,6 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         dados_detail = df_detail_cru.iloc[linha_cab_det + 1 :].copy()
         nomes_det = [str(x).strip().upper() for x in df_detail_cru.iloc[linha_cab_det].tolist()]
         idx_sku = next((i for i, col in enumerate(nomes_det) if "SKU" in col), 3) 
-
-        # Coluna L fixa (Índice 11)
         idx_qty = 11 
 
         df_detail_limpo = pd.DataFrame()
@@ -113,7 +110,6 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         df_detail_limpo["SKU"] = dados_detail.iloc[:, idx_sku].astype(str).str.strip()
         df_detail_limpo["OPENQTY"] = pd.to_numeric(dados_detail.iloc[:, idx_qty], errors="coerce").fillna(0)
 
-        # 2. PROCESSANDO A ABA "DATA" (Usando índices de coluna fixas)
         linha_cab_dat = 0
         for i in range(min(15, len(df_data_cru))):
             if df_data_cru.shape[1] > 2 and "order" in str(df_data_cru.iloc[i, 2]).strip().lower():
@@ -130,7 +126,6 @@ def processar_dataframes(df_detail_cru, df_data_cru):
         df_data_limpo["ROTA_LIMPA"] = df_data_limpo["ROTA_RAW"].apply(extrair_quatro_digitos_rota)
         df_data_final = df_data_limpo[["ORDERKEY", "ROTA_LIMPA", "PEDIDO_ROTA"]]
 
-        # 3. MERGE (PROCV)
         df_consolidado = pd.merge(df_detail_limpo, df_data_final, on="ORDERKEY", how="left")
         return df_consolidado
     except Exception as e:
@@ -139,7 +134,6 @@ def processar_dataframes(df_detail_cru, df_data_cru):
 
 def ler_arquivo_excel(caminho_ou_buffer):
     try:
-        # Tentativa 1: Excel padrão .xlsx
         with pd.ExcelFile(caminho_ou_buffer, engine="openpyxl") as xls:
             df_detail = pd.read_excel(xls, sheet_name="Detail", header=None)
             df_data = pd.read_excel(xls, sheet_name="Data", header=None)
@@ -148,13 +142,11 @@ def ler_arquivo_excel(caminho_ou_buffer):
         erro_str = str(e1).lower()
         if "zip" in erro_str or "unsupported" in erro_str or "format" in erro_str or "bad" in erro_str:
             try:
-                # Tentativa 2: HTML/XML disfarçado
                 df_detail = pd.read_html(caminho_ou_buffer, match="Detail")[0]
                 df_data = pd.read_html(caminho_ou_buffer, match="Data")[0]
                 return df_detail, df_data
             except Exception:
                 try:
-                    # Tentativa 3: XLS antigo
                     df_detail = pd.read_excel(caminho_ou_buffer, sheet_name="Detail", header=None, engine="xlrd")
                     df_data = pd.read_excel(caminho_ou_buffer, sheet_name="Data", header=None, engine="xlrd")
                     return df_detail, df_data
@@ -162,43 +154,26 @@ def ler_arquivo_excel(caminho_ou_buffer):
                     pass
     return None, None
 
-# --- PROCESSAMENTO DO BANCO DE DADOS ---
+
+# =========================================================================
+# PROCESSAMENTO AUTOMÁTICO (SEM UPLOAD MANUAL)
+# =========================================================================
 df_base = None
 
-st.markdown("### 📂 Gestão do Relatório de Carga")
-
-# Criamos duas colunas na interface para organizar os uploads
-col_arq1, col_arq2 = st.columns([2, 1])
-
-with col_arq1:
-    arquivo_enviado = st.file_uploader(
-        "Atualizar banco de dados temporariamente (arraste um novo .xlsx ou .xls):", 
-        type=["xlsx", "xls"]
-    )
-
-# Regra de carregamento inteligente:
-if arquivo_enviado is not None:
-    # Caso 1: Usuário arrastou um arquivo novo manualmente
-    tamanho_kb = len(arquivo_enviado.getvalue()) / 1024
-    st.info(f"📁 Arquivo manual recebido! Tamanho em memória: {tamanho_kb:.2f} KB")
-    
-    df_det, df_dat = ler_arquivo_excel(arquivo_enviado)
-    if df_det is not None and df_dat is not None:
-        df_base = processar_dataframes(df_det, df_dat)
-        if df_base is not None:
-            st.success("✅ Usando dados do arquivo enviado manualmente!")
-else:
-    # Caso 2: Não subiu nada, tenta ler o arquivo fixo "carga_atual.xlsx" no servidor/git
-    if os.path.exists(ARQUIVO_PADRAO):
+if os.path.exists(ARQUIVO_PADRAO):
+    with st.spinner('Sincronizando dados...'):
         df_det, df_dat = ler_arquivo_excel(ARQUIVO_PADRAO)
         if df_det is not None and df_dat is not None:
             df_base = processar_dataframes(df_det, df_dat)
             if df_base is not None:
-                st.success(f"⚡ Banco de dados local ({ARQUIVO_PADRAO}) carregado automaticamente!")
-    else:
-        st.warning(f"⚠️ Sem dados ativos. Arraste um arquivo acima ou salve o arquivo como '{ARQUIVO_PADRAO}' na pasta do projeto.")
+                st.success("✅ Sistema pronto e atualizado!")
+else:
+    st.error(f"❌ O arquivo '{ARQUIVO_PADRAO}' não foi encontrado no servidor.")
+    st.info("💡 Como você está usando via GitHub: Lembre-se de fazer o upload do arquivo excel com o nome exato 'carga_atual.xlsx' para dentro do seu repositório no GitHub para que o sistema consiga ler.")
 
-# --- INTERFACE DE BUSCA ---
+# =========================================================================
+# INTERFACE DE BUSCA
+# =========================================================================
 if df_base is not None:
     st.write("---")
     col1, col2 = st.columns(2)
