@@ -1,5 +1,6 @@
 import io
 import re
+import os
 import pandas as pd
 import streamlit as st
 
@@ -66,6 +67,10 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# --- DEFINIÇÃO DO ARQUIVO PADRÃO DO BANCO DE DADOS ---
+# O arquivo excel que você quer que carregue de forma fixa
+ARQUIVO_PADRAO = "carga_atual.xlsx" 
 
 def extrair_quatro_digitos_rota(valor_rota):
     if pd.isna(valor_rota):
@@ -157,29 +162,41 @@ def ler_arquivo_excel(caminho_ou_buffer):
                     pass
     return None, None
 
-# --- CARREGAMENTO INTEGRALMENTE MANUAL ---
+# --- PROCESSAMENTO DO BANCO DE DADOS ---
 df_base = None
 
-st.markdown("### 📂 Envie seu Relatório de Carga")
-arquivo_enviado = st.file_uploader(
-    "Arraste o arquivo exportado do ERP aqui (.xlsx ou .xls):", 
-    type=["xlsx", "xls"]
-)
+st.markdown("### 📂 Gestão do Relatório de Carga")
 
+# Criamos duas colunas na interface para organizar os uploads
+col_arq1, col_arq2 = st.columns([2, 1])
+
+with col_arq1:
+    arquivo_enviado = st.file_uploader(
+        "Atualizar banco de dados temporariamente (arraste um novo .xlsx ou .xls):", 
+        type=["xlsx", "xls"]
+    )
+
+# Regra de carregamento inteligente:
 if arquivo_enviado is not None:
-    # Mostra o tamanho real do arquivo que você acabou de subir para provar que o upload deu certo!
+    # Caso 1: Usuário arrastou um arquivo novo manualmente
     tamanho_kb = len(arquivo_enviado.getvalue()) / 1024
-    st.info(f"📁 Arquivo recebido com sucesso! Tamanho carregado na memória: {tamanho_kb:.2f} KB")
+    st.info(f"📁 Arquivo manual recebido! Tamanho em memória: {tamanho_kb:.2f} KB")
     
     df_det, df_dat = ler_arquivo_excel(arquivo_enviado)
     if df_det is not None and df_dat is not None:
         df_base = processar_dataframes(df_det, df_dat)
         if df_base is not None:
-            st.success("✅ Banco de dados processado com sucesso!")
-    else:
-        st.error("❌ O arquivo enviado não pôde ser lido. Certifique-se de que ele possui as abas 'Detail' e 'Data'.")
+            st.success("✅ Usando dados do arquivo enviado manualmente!")
 else:
-    st.warning("⚠️ Aguardando você arrastar o arquivo de cargas no campo acima para iniciar.")
+    # Caso 2: Não subiu nada, tenta ler o arquivo fixo "carga_atual.xlsx" no servidor/git
+    if os.path.exists(ARQUIVO_PADRAO):
+        df_det, df_dat = ler_arquivo_excel(ARQUIVO_PADRAO)
+        if df_det is not None and df_dat is not None:
+            df_base = processar_dataframes(df_det, df_dat)
+            if df_base is not None:
+                st.success(f"⚡ Banco de dados local ({ARQUIVO_PADRAO}) carregado automaticamente!")
+    else:
+        st.warning(f"⚠️ Sem dados ativos. Arraste um arquivo acima ou salve o arquivo como '{ARQUIVO_PADRAO}' na pasta do projeto.")
 
 # --- INTERFACE DE BUSCA ---
 if df_base is not None:
