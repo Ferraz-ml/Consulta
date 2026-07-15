@@ -68,8 +68,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# --- NOME DO ARQUIVO FIXO NO GITHUB/SERVIDOR ---
-# O arquivo excel precisa ter EXATAMENTE este nome e estar na mesma pasta do app.py
+# --- NOME DO ARQUIVO FIXO NO SERVIDOR ---
 ARQUIVO_PADRAO = "carga_atual.xlsx" 
 
 def extrair_quatro_digitos_rota(valor_rota):
@@ -156,9 +155,12 @@ def ler_arquivo_excel(caminho_ou_buffer):
 
 
 # =========================================================================
-# PROCESSAMENTO AUTOMÁTICO (SEM UPLOAD MANUAL)
+# PROCESSAMENTO AUTOMÁTICO COM DIAGNÓSTICO DE CAMINHO
 # =========================================================================
 df_base = None
+
+# 1. Descobrir onde o script está rodando de verdade
+diretorio_atual = os.getcwd()
 
 if os.path.exists(ARQUIVO_PADRAO):
     with st.spinner('Sincronizando dados...'):
@@ -168,8 +170,21 @@ if os.path.exists(ARQUIVO_PADRAO):
             if df_base is not None:
                 st.success("✅ Sistema pronto e atualizado!")
 else:
-    st.error(f"❌ O arquivo '{ARQUIVO_PADRAO}' não foi encontrado no servidor.")
-    st.info("💡 Como você está usando via GitHub: Lembre-se de fazer o upload do arquivo excel com o nome exato 'carga_atual.xlsx' para dentro do seu repositório no GitHub para que o sistema consiga ler.")
+    # Mostra o diagnóstico amigável na tela se falhar
+    st.error(f"❌ O arquivo '{ARQUIVO_PADRAO}' não foi encontrado.")
+    
+    st.markdown("### 🔍 Painel de Diagnóstico (Ajuda)")
+    st.warning(f"O Python está procurando o arquivo na pasta: \n`{diretorio_atual}`")
+    
+    # Listar os arquivos para ver se ele está lá com outro nome
+    arquivos_na_pasta = os.listdir(diretorio_atual)
+    arquivos_excel = [f for f in arquivos_na_pasta if f.endswith(('.xlsx', '.xls'))]
+    
+    if arquivos_excel:
+        st.info(f"Encontrei estes arquivos Excel na pasta atual. Algum deles é o seu? \n{arquivos_excel}")
+        st.write("👉 Se o seu arquivo estiver ali na lista, mude o nome dele para **`carga_atual.xlsx`** ou altere o nome no início do código!")
+    else:
+        st.info("Não encontrei nenhum arquivo Excel (.xlsx ou .xls) nessa pasta. Certifique-se de salvar seu relatório de carga exatamente na pasta listada acima!")
 
 # =========================================================================
 # INTERFACE DE BUSCA
